@@ -1,0 +1,78 @@
+import { toDay } from './plan.js'
+import { supabase } from './supabase.js'
+
+const check = ({ data, error }) => {
+  if (error) throw error
+  return data
+}
+
+export async function fetchExercises() {
+  const data = check(await supabase
+    .from('exercises')
+    .select('id, body_part, name, tags, description, help, images')
+    .order('id'))
+
+  return data.map((r) => ({
+    id: r.id,
+    bodyPart: r.body_part,
+    name: r.name,
+    tags: r.tags,
+    description: r.description,
+    help: r.help,
+    images: r.images,
+  }))
+}
+
+// body parts in insertion (CSV) order
+export const bodyPartsOf = (exercises) => [...new Set(exercises.map((e) => e.bodyPart))]
+
+// PostgREST caps responses (1000 rows by default), and 26 weeks of logs can exceed that.
+async function fetchAll(query) {
+  const rows = []
+  for (let from = 0; ; from += 1000) {
+    const page = check(await query().range(from, from + 999))
+    rows.push(...page)
+    if (page.length < 1000) return rows
+  }
+}
+
+// Creates default settings on first use. Two loads can race (StrictMode, two tabs), so
+// insert-or-ignore instead of select-then-insert.
+async function fetchSettings(userId) {
+  check(await supabase.from('settings')
+    .upsert({ user_id: userId, start_date: toDay() }, { onConflict: 'user_id', ignoreDuplicates: true }))
+  return check(await supabase.from('settings').select('*').eq('user_id', userId).single())
+}
+
+export async function fetchUserData(userId) {
+  const [settings, overrides, logs, blocked] = await Promise.all([
+    fetchSettings(userId),
+    fetchAll(() => supabase.from('day_overrides').select('*').order('day')),
+    fetchAll(() => supabase.from('workout_logs').select('*').order('day').order('id')),
+    fetchAll(() => supabase.from('blocked_exercises').select('exercise_id')),
+  ])
+  return {
+    settings,
+    overrides: Object.fromEntries(overrides.map((o) => [o.day, o])),
+    logs,
+    blocked: new Set(blocked.map((b) => b.exercise_id)),
+  }
+}
+
+export const saveSettings = async (userId, fields) =>
+  check(await supabase.from('settings').update(fields).eq('user_id', userId).select().single())
+
+export const saveOverride = async (userId, day, fields) =>
+  check(await supabase.from('day_overrides')
+    .upsert({ user_id: userId, day, ...fields }, { onConflict: 'user_id,day' })
+    .select().single())
+
+export const saveLog = async (userId, log) =>
+  check(await supabase.from('workout_logs')
+    .upsert({ user_id: userId, ...log }, { onConflict: 'user_id,exercise_id,day' })
+    .select().single())
+
+export const setBlocked = async (userId, exerciseId, blocked) =>
+  check(blocked
+    ? await supabase.from('blocked_exercises').insert({ user_id: userId, exercise_id: exerciseId })
+    : await supabase.from('blocked_exercises').delete().eq('user_id', userId).eq('exercise_id', exerciseId))

@@ -1,16 +1,20 @@
-# React + Vite
+# Exercise Book
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Daily workout planner: one muscle group per day, 6 days a week, over a 26-week plan.
+Exercises rotate so the ones you did longest ago come first, with variety across sub-muscle tags.
+You log sets, reps and weight for each exercise, and you can mark an exercise as unavailable to get a replacement.
 
-Currently, two official plugins are available:
+## Setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+1. Run the SQL files in Supabase, in this order: `../supabase/migrations/*.sql`, then `../supabase/seed.sql`.
+2. Create `.env.local` with `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
+3. Run `npm install`, then `npm run dev`. Create an account on the sign-in screen.
+   If email confirmation is on (the Supabase default), click the link in the email, then sign in.
 
-## React Compiler
+## Code map
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+- `src/plan.js` – rotation planner (pure functions, tested by `npm test`)
+- `src/data.js` – Supabase reads and writes
+- `src/App.jsx` – sign-in, data loading, tabs
+- `src/Today.jsx`, `Plan.jsx`, `Progress.jsx`, `Settings.jsx`, `Library.jsx` – screens
+- `src/ui.jsx` – shared components (images, exercise detail view)
