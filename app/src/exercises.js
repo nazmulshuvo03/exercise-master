@@ -1,17 +1,22 @@
-import Papa from 'papaparse'
-import csv from '../../exercises.csv?raw'
+import { supabase } from './supabase.js'
 
-const rows = Papa.parse(csv.replace(/^﻿/, ''), { header: true, skipEmptyLines: true }).data
+export async function fetchExercises() {
+  const { data, error } = await supabase
+    .from('exercises')
+    .select('id, body_part, name, tags, description, help, images')
+    .order('id')
+  if (error) throw error
 
-export const exercises = rows.map((r) => ({
-  id: `${r['Body Part']}-${r['Serial No']}`,
-  bodyPart: r['Body Part'],
-  name: r.Exercise,
-  tags: r.Tags.split(',').map((t) => t.trim()).filter(Boolean),
-  description: r.Description,
-  help: r.Help,
-  images: Array.from({ length: 10 }, (_, i) => r[`Image ${i + 1}`]).filter(Boolean),
-}))
+  return data.map((r) => ({
+    id: r.id,
+    bodyPart: r.body_part,
+    name: r.name,
+    tags: r.tags,
+    description: r.description,
+    help: r.help,
+    images: r.images,
+  }))
+}
 
-// body parts in CSV order
-export const bodyParts = [...new Set(exercises.map((e) => e.bodyPart))]
+// body parts in insertion (CSV) order
+export const bodyPartsOf = (exercises) => [...new Set(exercises.map((e) => e.bodyPart))]

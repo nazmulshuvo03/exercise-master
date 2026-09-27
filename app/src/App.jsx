@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { bodyParts, exercises } from './exercises.js'
+import { bodyPartsOf, fetchExercises } from './exercises.js'
 
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-')
 const initials = (name) =>
@@ -133,14 +133,22 @@ function Detail({ exercise, onClose }) {
 export default function App() {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(null)
+  const [exercises, setExercises] = useState([])
+  const [status, setStatus] = useState('loading') // loading | ready | error
+
+  useEffect(() => {
+    fetchExercises()
+      .then((data) => { setExercises(data); setStatus('ready') })
+      .catch((err) => { console.error(err); setStatus('error') })
+  }, [])
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase()
     const match = (e) => !q || e.name.toLowerCase().includes(q) || e.tags.some((t) => t.toLowerCase().includes(q))
-    return bodyParts
+    return bodyPartsOf(exercises)
       .map((part) => ({ part, items: exercises.filter((e) => e.bodyPart === part && match(e)) }))
       .filter((g) => g.items.length)
-  }, [query])
+  }, [query, exercises])
 
   // Phone back button closes the detail view.
   useEffect(() => {
@@ -174,7 +182,9 @@ export default function App() {
       </header>
 
       <main>
-        {groups.length === 0 && <p className="empty">No exercises match “{query}”.</p>}
+        {status === 'loading' && <p className="empty">Loading exercises…</p>}
+        {status === 'error' && <p className="empty">Could not load exercises. Check your connection and try again.</p>}
+        {status === 'ready' && groups.length === 0 && <p className="empty">No exercises match “{query}”.</p>}
         {groups.map((g) => (
           <section key={g.part} id={slug(g.part)} aria-labelledby={`h-${slug(g.part)}`}>
             <h2 className="section-head" id={`h-${slug(g.part)}`}>
