@@ -4,14 +4,27 @@ import Library from './Library.jsx'
 import { dayInfo, formatDay, planEnd, REST } from './plan.js'
 import { ExerciseInfo, GroupSelect, Overlay, useBackClosable } from './ui.jsx'
 
-const DEFAULT_ROWS = Array.from({ length: 3 }, () => ({ reps: '10', weight: '0' }))
+// First-time rows: 3 × 10 reps, one 20-minute block, or 3 × 30-second intervals.
+const START = { Reps: [3, '10'], Minutes: [1, '20'], Seconds: [3, '30'] }
+const defaultRows = ([amount]) => {
+  const [n, value] = START[amount] ?? START.Reps
+  return Array.from({ length: n }, () => ({ reps: value, weight: '0' }))
+}
 const rowsOf = (log) => log.reps.map((r, i) => ({ reps: String(r), weight: String(Number(log.weights[i])) }))
 const sameRows = (a, b) =>
   a.length === b.length && a.every((r, i) => Number(r.reps) === Number(b[i].reps) && Number(r.weight) === Number(b[i].weight))
-const summary = (log) => log.reps.map((r, i) => `${r} × ${Number(log.weights[i])} kg`).join(', ')
+// Minutes + km (treadmill): speed is derived, not typed.
+const hasSpeed = (amount, load) => amount === 'Minutes' && load === 'km'
+const speed = (minutes, km) => (Number(minutes) > 0 ? `${(Number(km) / (Number(minutes) / 60)).toFixed(1)} km/h` : '–')
+const summary = (log, [amount, load]) =>
+  log.reps.map((r, i) => {
+    const w = Number(log.weights[i])
+    if (hasSpeed(amount, load)) return `${r} min, ${w} km (${speed(r, w)})`
+    return `${r} ${amount.toLowerCase()}${load ? ` @ ${w} ${load}` : ''}`
+  }).join(', ')
 
 // One row per set: reps and weight.
-function SetsForm({ rows, saved, onChange, onSave }) {
+function SetsForm({ units: [amount, load], rows, saved, onChange, onSave }) {
   const [busy, setBusy] = useState(false)
   const changed = !saved || !sameRows(rows, saved)
   const edit = (i, key) => (e) => onChange(rows.map((r, j) => (j === i ? { ...r, [key]: e.target.value } : r)))
@@ -27,7 +40,7 @@ function SetsForm({ rows, saved, onChange, onSave }) {
     <form className="sets" onSubmit={submit}>
       <table>
         <thead>
-          <tr><th scope="col">Set</th><th scope="col">Reps</th><th scope="col">kg</th></tr>
+          <tr><th scope="col">Set</th><th scope="col">{amount}</th>{load && <th scope="col">{load}</th>}{hasSpeed(amount, load) && <th scope="col">Speed</th>}</tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
@@ -35,12 +48,15 @@ function SetsForm({ rows, saved, onChange, onSave }) {
               <th scope="row">{i + 1}</th>
               <td>
                 <input type="number" inputMode="numeric" min="1" max="500" required
-                  aria-label={`Set ${i + 1} reps`} value={r.reps} onChange={edit(i, 'reps')} />
+                  aria-label={`Set ${i + 1} ${amount.toLowerCase()}`} value={r.reps} onChange={edit(i, 'reps')} />
               </td>
-              <td>
-                <input type="number" inputMode="decimal" min="0" max="9999" step="0.25" required
-                  aria-label={`Set ${i + 1} weight in kg`} value={r.weight} onChange={edit(i, 'weight')} />
-              </td>
+              {load && (
+                <td>
+                  <input type="number" inputMode="decimal" min="0" max="9999" step="0.25" required
+                    aria-label={`Set ${i + 1} ${load}`} value={r.weight} onChange={edit(i, 'weight')} />
+                </td>
+              )}
+              {hasSpeed(amount, load) && <td className="speed"><output>{speed(r.reps, r.weight)}</output></td>}
             </tr>
           ))}
         </tbody>
@@ -122,7 +138,7 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
   const saved = exercise && done.get(exercise.id)
   const previous = exercise && last.get(exercise.id)
   const logged = saved ?? previous
-  const rows = exercise && (drafts[exercise.id] ?? (logged ? rowsOf(logged) : DEFAULT_ROWS))
+  const rows = exercise && (drafts[exercise.id] ?? (logged ? rowsOf(logged) : defaultRows(exercise.units)))
 
   return (
     <>
@@ -160,9 +176,10 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
             </p>
             <h2 id="exercise-name">{exercise.name}</h2>
             <p className="card-meta">
-              {previous ? `Last time, ${formatDay(previous.day, { day: 'numeric', month: 'short' })}: ${summary(previous)}` : 'First time'}
+              {previous ? `Last time, ${formatDay(previous.day, { day: 'numeric', month: 'short' })}: ${summary(previous, exercise.units)}` : 'First time'}
             </p>
             <SetsForm
+              units={exercise.units}
               rows={rows}
               saved={saved && rowsOf(saved)}
               onChange={(r) => setDrafts((d) => ({ ...d, [exercise.id]: r }))}

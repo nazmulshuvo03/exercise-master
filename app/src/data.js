@@ -9,7 +9,7 @@ const check = ({ data, error }) => {
 export async function fetchExercises() {
   const data = check(await supabase
     .from('exercises')
-    .select('id, body_part, name, tags, description, help, images')
+    .select('id, body_part, name, tags, description, help, images, units')
     .order('id'))
 
   return data.map((r) => ({
@@ -20,6 +20,7 @@ export async function fetchExercises() {
     description: r.description,
     help: r.help,
     images: r.images,
+    units: r.units, // [amount per set, optional load], e.g. ['Reps', 'kg'] or ['Minutes', 'km']
   }))
 }
 

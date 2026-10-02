@@ -358,6 +358,7 @@ select, .field input, .counts input {
   border: 1px solid var(--line);
   border-radius: 10px;
 }
+.sets .speed { white-space: nowrap; font-weight: 600; color: var(--muted); }
 .sets-actions { display: flex; gap: 8px; margin: 10px 0 6px; }
 .sets-actions .primary { flex: 1; }
 
@@ -438,4 +439,9 @@ select, .field input, .counts input {
   .grid-2 { grid-template-columns: repeat(4, 1fr); }
   .tabs { justify-content: center; }
   .tabs button { flex: 0 1 180px; }
+}
+
+/* Hidden-scrollbar rows only scroll by swiping; with a mouse, wrap them so every item is reachable. */
+@media (hover: hover) and (pointer: fine) {
+  .chips, .jump { flex-wrap: wrap; overflow-x: visible; }
 }
