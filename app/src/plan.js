@@ -14,6 +14,11 @@ export const addDays = (day, n) => new Date(ms(day) + n * DAY_MS).toISOString().
 export const daysBetween = (a, b) => Math.round((ms(b) - ms(a)) / DAY_MS)
 export const formatDay = (day, options) => new Date(ms(day)).toLocaleDateString(undefined, { timeZone: 'UTC', ...options })
 export const planEnd =(settings) => addDays(settings.start_date, PLAN_WEEKS * 7)
+// The 7 days of the plan week that contains `day`.
+export const weekOf = (day, settings) => {
+  const start = addDays(settings.start_date, Math.floor(daysBetween(settings.start_date, day) / 7) * 7)
+  return Array.from({ length: 7 }, (_, k) => addDays(start, k))
+}
 
 // Muscle group and exercise counts for one day, or null when the day is outside the plan.
 export function dayInfo(day, settings, overrides = {}) {
@@ -30,7 +35,46 @@ export function dayInfo(day, settings, overrides = {}) {
     main: rest ? 0 : (settings.main_counts[group] ?? 7),
     core: rest || group === CORE ? 0 : (settings.core_counts[group] ?? 0),
     added: o.added ?? [], // exercise ids picked by hand for this day
+    plan: rest ? null : (o.plan ?? null), // exact exercise ids (AI or swapped); null = rotate
   }
+}
+
+// ---------- AI answers: the model may only choose from what the app already allows ----------
+
+// Per day, keeps the AI's list only when it has exactly the expected main and core exercises, all
+// real, unblocked, from the right group, no duplicates. Returns { day: [ids] } for accepted days;
+// the rest stay on the preset rotation.
+export function validateWeek(response, { exercises, blocked, infos }) {
+  const byId = new Map(exercises.map((e) => [e.id, e]))
+  const accepted = {}
+  for (const { day, exercises: ids } of Array.isArray(response?.days) ? response.days : []) {
+    const info = infos.find((i) => i.day === day)
+    if (!info || !Array.isArray(ids) || new Set(ids).size !== ids.length) continue
+    const picked = ids.map((id) => byId.get(id))
+    if (picked.some((e) => !e || blocked.has(e.id))) continue
+    const count = (group) => picked.filter((e) => e.bodyPart === group).length
+    const core = info.group === CORE ? 0 : count(CORE) // a Core day has only main exercises
+    if (count(info.group) === info.main && core === info.core && picked.length === info.main + info.core) {
+      accepted[day] = ids
+    }
+  }
+  return accepted
+}
+
+// Exercises that could replace `exercise` today: same body part, available, not already in the day.
+export const swapCandidates = (exercise, { exercises, blocked, dayIds }) =>
+  exercises.filter((e) => e.bodyPart === exercise.bodyPart && e.id !== exercise.id && !blocked.has(e.id) && !dayIds.includes(e.id))
+
+// The AI's chosen replacement (an exercise), or undefined when its id is not an allowed candidate.
+export const validateSwap = (response, exercise, ctx) => swapCandidates(exercise, ctx).find((e) => e.id === response?.id)
+
+// Used when the AI is unavailable: most shared tags (similar), then longest unused.
+// lastDone: Map exerciseId -> last day done. ponytail: tag overlap only, no equipment/movement model.
+export function fallbackSwap(exercise, ctx) {
+  const tags = new Set(exercise.tags)
+  const overlap = (e) => e.tags.filter((t) => tags.has(t)).length
+  const idle = (e) => ctx.lastDone.get(e.id) ?? '' // '' sorts before any date: never done first
+  return swapCandidates(exercise, ctx).sort((a, b) => overlap(b) - overlap(a) || idle(a).localeCompare(idle(b)))[0]
 }
 
 // Deterministic RNG seeded by a string, so a day's picks don't change on reload.
@@ -88,9 +132,10 @@ export function buildSchedule({ exercises, blocked, lastDone, settings, override
     const added = info.added.map((id) => byId.get(id)).filter((e) => e && !blocked.has(e.id))
     added.forEach((e) => last.set(e.id, day))
     const free = (group) => (pools.get(group) ?? []).filter((e) => !added.includes(e))
-    const main = pick(free(info.group), info.main, day, last)
-    const core = pick(free(CORE), info.core, day, last)
-    days.push({ ...info, exercises: [...main, ...core, ...added] })
+    const fixed = info.plan?.map((id) => byId.get(id)).filter((e) => e && !blocked.has(e.id))
+    const body = fixed ?? [...pick(free(info.group), info.main, day, last), ...pick(free(CORE), info.core, day, last)]
+    fixed?.forEach((e) => last.set(e.id, day))
+    days.push({ ...info, exercises: [...body, ...added.filter((e) => !body.includes(e))] })
   }
   return days
 }

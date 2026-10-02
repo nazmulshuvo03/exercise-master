@@ -49,7 +49,7 @@ export default function Progress({ exercises, data, groups }) {
               </thead>
               <tbody>
                 {[...byGroup].filter(([, t]) => t.sets).map(([g, t]) => (
-                  <tr key={g}><th scope="row">{g}</th><td>{t.days.size}</td><td>{fmt(t.sets)}</td><td>{fmt(t.reps)}</td><td>{fmt(t.volume)}</td>{timed && <td>{fmt(t.minutes)}</td>}</tr>
+                  <tr key={g} data-group={g}><th scope="row">{g}</th><td>{t.days.size}</td><td>{fmt(t.sets)}</td><td>{fmt(t.reps)}</td><td>{fmt(t.volume)}</td>{timed && <td>{fmt(t.minutes)}</td>}</tr>
                 ))}
               </tbody>
             </table>
@@ -60,7 +60,7 @@ export default function Progress({ exercises, data, groups }) {
                 <li key={w}>
                   <span>Week {w}</span>
                   <span className="bar" aria-hidden="true"><span style={{ width: `${(t.volume / maxVolume) * 100}%` }} /></span>
-                  <span>{fmt(t.sets)} sets · {fmt(t.volume)} kg{t.minutes > 0 && ` · ${fmt(t.minutes)} min cardio`}</span>
+                  <span>{fmt(t.sets)} sets, {fmt(t.volume)} kg{t.minutes > 0 && `, ${fmt(t.minutes)} min cardio`}</span>
                 </li>
               ))}
             </ul>

@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { planDays } from './ai.js'
 import { bodyPartsOf, fetchExercises, fetchUserData, saveOverride } from './data.js'
 import Library from './Library.jsx'
 import Plan from './Plan.jsx'
-import { buildSchedule, daysBetween, toDay } from './plan.js'
+import Home from './Home.jsx'
+import { buildSchedule, dayInfo, daysBetween, toDay, weekOf } from './plan.js'
 import Progress from './Progress.jsx'
 import Settings from './Settings.jsx'
 import { supabase } from './supabase.js'
 import Today from './Today.jsx'
 
-const TABS = ['Today', 'Plan', 'Progress', 'Exercises', 'Settings']
+const TABS = ['Home', 'Today', 'Plan', 'Progress', 'Exercises', 'Settings']
 
 function Login() {
   const [message, setMessage] = useState('')
@@ -68,7 +70,9 @@ function Workspace({ userId, email }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [reload, setReload] = useState(0)
-  const [tab, setTab] = useState('Today')
+  const [tab, setTab] = useState('Home')
+  const [ai, setAi] = useState({ days: null, message: '' }) // days: being planned by AI right now
+  const tried = useRef(new Set()) // days the auto-plan already asked for, so a failing AI is not re-asked in a loop
 
   useEffect(() => {
     let live = true
@@ -91,10 +95,15 @@ function Workspace({ userId, email }) {
     }
   }, [])
 
-  // Changes one day's group or counts. Choosing the week's default group clears the override.
+  // Changes one day's group or hand-picked exercises. Choosing the week's default group clears the
+  // override; any group change drops the day's exact exercise list, which belonged to the old group.
   const setOverride = (day, fields) => {
     const { settings } = data
     if (fields.muscle_group === settings.week[daysBetween(settings.start_date, day) % 7]) fields = { ...fields, muscle_group: null }
+    if ('muscle_group' in fields) {
+      fields = { ...fields, plan: null }
+      tried.current.delete(day) // new group: let the auto-plan ask the AI for this day again
+    }
     return save(() => saveOverride(userId, day, fields), (d, row) => ({ overrides: { ...d.overrides, [day]: row } }))
   }
 
@@ -106,6 +115,23 @@ function Workspace({ userId, email }) {
     return buildSchedule({ exercises, blocked: data.blocked, lastDone, settings: data.settings, overrides: data.overrides, from: today })
   }, [exercises, data, today])
 
+  const planWithAi = async (days) => {
+    setAi({ days, message: '' })
+    setAi({ days: null, message: await planDays(days, { exercises, data, userId, save, today }) })
+  }
+
+  // The AI plans the rest of the current week as soon as a day there has no exercise list yet.
+  // Days it could not plan fall back to the preset rotation.
+  useEffect(() => {
+    if (!data || ai.days) return
+    const missing = weekOf(today, data.settings).filter((day) => {
+      const info = day >= today && !tried.current.has(day) && dayInfo(day, data.settings, data.overrides)
+      return info && !info.plan && info.main + info.core > 0
+    })
+    missing.forEach((day) => tried.current.add(day))
+    if (missing.length) planWithAi(missing)
+  }, [data, ai.days, today]) // eslint-disable-line react-hooks/exhaustive-deps -- planWithAi is rebuilt each render
+
   if (error) {
     return (
       <p className="empty">
@@ -116,9 +142,10 @@ function Workspace({ userId, email }) {
   }
   if (!data) return <p className="empty">Loading your plan…</p>
 
-  const props = { exercises, data, userId, save, setOverride, today, schedule, groups: bodyPartsOf(exercises) }
+  const props = { exercises, data, userId, save, setOverride, today, schedule, groups: bodyPartsOf(exercises), go: setTab, ai, planWithAi }
   return (
     <>
+      {tab === 'Home' && <Home {...props} />}
       {tab === 'Today' && <Today {...props} />}
       {tab === 'Plan' && <Plan {...props} />}
       {tab === 'Progress' && <Progress {...props} />}

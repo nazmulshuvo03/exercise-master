@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
+import { askAi, swapRequest } from './ai.js'
 import { saveLog, setBlocked } from './data.js'
 import Library from './Library.jsx'
-import { dayInfo, formatDay, planEnd, REST } from './plan.js'
+import { dayInfo, fallbackSwap, formatDay, planEnd, REST, swapCandidates, validateSwap } from './plan.js'
 import { ExerciseInfo, GroupSelect, Overlay, useBackClosable } from './ui.jsx'
 
 // First-time rows: 3 × 10 reps, one 20-minute block, or 3 × 30-second intervals.
@@ -70,10 +71,12 @@ function SetsForm({ units: [amount, load], rows, saved, onChange, onSave }) {
   )
 }
 
-export default function Today({ exercises, data, userId, save, setOverride, today, schedule, groups }) {
+export default function Today({ exercises, data, userId, save, setOverride, today, schedule, groups, ai }) {
   const [index, setIndex] = useState(0)
   const [drafts, setDrafts] = useState({}) // unsaved set rows by exercise id, kept while paging
   const [picking, openPicker, closePicker] = useBackClosable()
+  const [status, setStatus] = useState('')
+  const [swapping, setSwapping] = useState(false)
   const info = dayInfo(today, data.settings, data.overrides)
 
   const last = new Map()
@@ -83,8 +86,10 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
     else if (l.day === today) done.set(l.exercise_id, l)
   }
 
-  // today's plan, plus anything already logged today that is no longer in it
-  const planned = schedule[0]?.day === today ? schedule[0].exercises : []
+  // today's plan, plus anything already logged today that is no longer in it. While the AI plans
+  // today, only hand-added exercises show, not the preset rotation it is about to replace.
+  const waiting = ai.days?.includes(today) && !info?.plan
+  const planned = (schedule[0]?.day === today ? schedule[0].exercises : []).filter((e) => !waiting || info.added.includes(e.id))
   const byId = new Map(exercises.map((e) => [e.id, e]))
   const list = [...planned, ...[...done.keys()].map((id) => byId.get(id)).filter((e) => e && !planned.includes(e))]
   const i = Math.max(0, Math.min(index, list.length - 1))
@@ -116,9 +121,39 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
 
   const removeAdded = (e) => setOverride(today, { added: info.added.filter((id) => id !== e.id) })
 
-  const block = (e) => {
-    if (!confirm(`Mark “${e.name}” as unavailable? You'll get another ${e.bodyPart.toLowerCase()} exercise instead, and it won't be planned again. You can undo this in Settings.`)) return
-    save(() => setBlocked(userId, e.id, true), (d) => ({ blocked: new Set(d.blocked).add(e.id) }))
+  // Replaces a not-yet-done exercise in today's list with a similar one: the AI's pick, or the
+  // closest by tags when the AI is unavailable. permanent = also never plan it again.
+  const swap = async (e, permanent) => {
+    if (permanent && !confirm(`Mark “${e.name}” as unavailable? You'll get a similar ${e.bodyPart.toLowerCase()} exercise instead, and it won't be planned again. You can undo this in Settings.`)) return
+    const body = info.plan ?? planned.filter((x) => !info.added.includes(x.id)).map((x) => x.id)
+    setSwapping(true)
+    setStatus('')
+    try {
+      const ctx = {
+        exercises,
+        blocked: permanent ? new Set(data.blocked).add(e.id) : data.blocked,
+        dayIds: list.map((x) => x.id),
+        lastDone: new Map([...last].map(([id, l]) => [id, l.day])),
+      }
+      let next, why
+      try {
+        const ai = await askAi('swap', swapRequest(e, swapCandidates(e, ctx), list))
+        next = validateSwap(ai, e, ctx)
+        why = typeof ai.why === 'string' ? ai.why.slice(0, 120) : ''
+      } catch (err) {
+        console.error(err)
+      }
+      const aiPick = Boolean(next)
+      next ??= fallbackSwap(e, ctx)
+      // save() resolves to undefined on failure; setBlocked succeeds with null
+      if (permanent && await save(() => setBlocked(userId, e.id, true), (d) => ({ blocked: new Set(d.blocked).add(e.id) })) === undefined) return
+      if (!next) return setStatus(`No similar ${e.bodyPart.toLowerCase()} exercise is left for “${e.name}”.`)
+      if (!body.includes(e.id)) return
+      await setOverride(today, { plan: body.map((id) => (id === e.id ? next.id : id)) })
+      setStatus(`Replaced “${e.name}” with “${next.name}”${aiPick && why ? `: ${why}` : ''}${aiPick ? '' : ' (AI unavailable, picked by similar tags)'}.`)
+    } finally {
+      setSwapping(false)
+    }
   }
 
   const logSets = async (e, rows) => {
@@ -142,13 +177,13 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
 
   return (
     <>
-      <header className="top">
+      <header className="top" data-group={info.group}>
         <div className="today-head">
           <h1>{info.group === REST ? 'Rest day' : info.group}</h1>
           <GroupSelect groups={groups} value={info.group} onChange={(g) => setOverride(today, { muscle_group: g })} aria-label="Muscle group for today" />
         </div>
         <p className="subtitle">
-          {formatDay(today, { weekday: 'long', day: 'numeric', month: 'long' })} · Week {info.week}, day {info.weekDay} · {done.size} of {list.length} done
+          {formatDay(today, { weekday: 'long', day: 'numeric', month: 'long' })}, week {info.week} day {info.weekDay}. {done.size} of {list.length} done.
         </p>
         <nav className="chips" aria-label="Today's exercises">
           {list.map((e, j) => (
@@ -160,18 +195,20 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
         </nav>
       </header>
 
+      {status && <p className="hint swap-status" role="status">{status}</p>}
+
       {!exercise && (
         <main>
-          <p className="empty">Nothing planned. Enjoy the rest, or add an exercise.</p>
+          <p className="empty">{waiting ? 'AI is planning today’s workout…' : 'Nothing planned. Enjoy the rest, or add an exercise.'}</p>
         </main>
       )}
 
       {exercise && (
-        <main className="exercise" key={exercise.id}>
+        <main className="exercise" key={exercise.id} data-group={exercise.bodyPart}>
           <section className="exercise-log" aria-labelledby="exercise-name">
             <p className="exercise-count">
               Exercise {i + 1} of {list.length}
-              {exercise.bodyPart !== info.group && <span className="badge">{exercise.bodyPart}</span>}
+              {exercise.bodyPart !== info.group && <span className="badge" data-group={exercise.bodyPart}>{exercise.bodyPart}</span>}
               {info.added.includes(exercise.id) && <span className="badge">Added</span>}
             </p>
             <h2 id="exercise-name">{exercise.name}</h2>
@@ -187,7 +224,12 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
             />
             {info.added.includes(exercise.id)
               ? <button className="link" onClick={() => removeAdded(exercise)}>Remove from today</button>
-              : <button className="link" onClick={() => block(exercise)}>Not available in my gym</button>}
+              : (
+                <div className="swap-actions">
+                  {!saved && <button className="link" disabled={swapping} onClick={() => swap(exercise, false)}>{swapping ? 'Finding a replacement…' : 'Skip today'}</button>}
+                  <button className="link" disabled={swapping} onClick={() => swap(exercise, true)}>Not available in my gym</button>
+                </div>
+              )}
           </section>
           <section className="exercise-info" aria-label="How to do it">
             <ExerciseInfo exercise={exercise} />

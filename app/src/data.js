@@ -68,6 +68,12 @@ export const saveOverride = async (userId, day, fields) =>
     .upsert({ user_id: userId, day, ...fields }, { onConflict: 'user_id,day' })
     .select().single())
 
+// rows: [{ day, ...fields }]; fields not listed keep their saved values.
+export const saveOverrides = async (userId, rows) =>
+  check(await supabase.from('day_overrides')
+    .upsert(rows.map((r) => ({ user_id: userId, ...r })), { onConflict: 'user_id,day' })
+    .select())
+
 export const saveLog = async (userId, log) =>
   check(await supabase.from('workout_logs')
     .upsert({ user_id: userId, ...log }, { onConflict: 'user_id,exercise_id,day' })

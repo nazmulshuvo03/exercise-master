@@ -31,7 +31,7 @@ export default function Library({ exercises, blocked, title = 'Exercises', onPic
         />
         <nav className="jump" aria-label="Body parts">
           {groups.map((g) => (
-            <a key={g.part} href={`#${slug(g.part)}`}>{g.part}</a>
+            <a key={g.part} data-group={g.part} href={`#${slug(g.part)}`}>{g.part}</a>
           ))}
         </nav>
       </header>
@@ -39,20 +39,18 @@ export default function Library({ exercises, blocked, title = 'Exercises', onPic
       <main>
         {groups.length === 0 && <p className="empty">No exercises match “{query}”.</p>}
         {groups.map((g) => (
-          <section key={g.part} id={slug(g.part)} aria-labelledby={`h-${slug(g.part)}`}>
+          <section key={g.part} id={slug(g.part)} data-group={g.part} aria-labelledby={`h-${slug(g.part)}`}>
             <h2 className="section-head" id={`h-${slug(g.part)}`}>
               {g.part} <span>{g.items.length}</span>
             </h2>
-            <ul className="list">
+            <ul className="tiles">
               {g.items.map((e) => (
                 <li key={e.id}>
-                  <button className="row" onClick={() => (onPick ?? open)(e)}>
+                  <button className={blocked.has(e.id) ? 'tile unavailable' : 'tile'} onClick={() => (onPick ?? open)(e)}>
                     <Avatar exercise={e} />
-                    <span className="row-text">
-                      <span className="row-name">
-                        {e.name} {blocked.has(e.id) && <span className="badge">Unavailable</span>}
-                      </span>
-                      <span className="row-tags">{e.tags.filter((t) => t !== e.bodyPart).join(' · ')}</span>
+                    <span className="row-name">{e.name}</span>
+                    <span className="row-tags">
+                      {blocked.has(e.id) && <span className="badge">Unavailable</span>} {e.tags.filter((t) => t !== e.bodyPart).join(', ')}
                     </span>
                   </button>
                 </li>

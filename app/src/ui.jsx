@@ -114,7 +114,7 @@ export function ExerciseInfo({ exercise }) {
 }
 
 // Full-screen layer with a back bar; Escape closes it.
-export function Overlay({ title, label, onClose, children }) {
+export function Overlay({ title, label, group, onClose, children }) {
   const layer = useRef(null)
   const closeRef = useRef(null)
 
@@ -126,10 +126,10 @@ export function Overlay({ title, label, onClose, children }) {
   }, [onClose])
 
   return (
-    <div ref={layer} className="overlay" role="dialog" aria-modal="true" aria-label={title}>
+    <div ref={layer} className="overlay" data-group={group} role="dialog" aria-modal="true" aria-label={title}>
       <div className="detail-bar">
         <button ref={closeRef} className="back" onClick={onClose}>‹ Back</button>
-        <span className="detail-part">{label}</span>
+        <span className={group ? 'detail-part badge' : 'detail-part'}>{label}</span>
       </div>
       {children}
     </div>
@@ -159,7 +159,7 @@ export function useBackClosable() {
 export function useDetail() {
   const [selected, open, close] = useBackClosable()
   const detail = selected && (
-    <Overlay key={selected.id} title={selected.name} label={selected.bodyPart} onClose={close}>
+    <Overlay key={selected.id} title={selected.name} label={selected.bodyPart} group={selected.bodyPart} onClose={close}>
       <div className="detail-body">
         <h1>{selected.name}</h1>
         <ExerciseInfo exercise={selected} />
