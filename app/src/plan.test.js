@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { addDays, buildSchedule, dayInfo, fallbackSwap, PLAN_WEEKS, validateSwap, validateWeek, weekOf } from './plan.js'
+import { addDays, buildSchedule, dayInfo, fallbackSwap, validateSwap, validateWeek, weekOf } from './plan.js'
 
 const sizes = { Chest: 21, Shoulders: 16, Back: 20, Biceps: 19, Triceps: 18, Legs: 32, Core: 14 }
 const exercises = Object.entries(sizes).flatMap(([part, n], g) =>
@@ -15,9 +15,9 @@ const settings = {
 const plan = (extra = {}) =>
   buildSchedule({ exercises, blocked: new Set(), lastDone: new Map(), settings, overrides: {}, from: settings.start_date, ...extra })
 
-test('covers 26 weeks with correct groups and counts', () => {
+test('plans one week from the start with correct groups and counts', () => {
   const days = plan()
-  assert.equal(days.length, PLAN_WEEKS * 7)
+  assert.equal(days.length, 7)
   for (const d of days) {
     const main = d.exercises.filter((e) => e.bodyPart === d.group)
     const core = d.exercises.filter((e) => e.bodyPart === 'Core')
@@ -25,20 +25,10 @@ test('covers 26 weeks with correct groups and counts', () => {
     assert.equal(core.length, d.core)
     if (d.group === 'Rest') assert.equal(d.exercises.length, 0)
   }
-  assert.equal(dayInfo(addDays(settings.start_date, PLAN_WEEKS * 7), settings), null)
-})
-
-test('no exercise repeats until its pool has rotated', () => {
-  const lastSeen = new Map()
-  for (const [i, d] of plan().entries()) {
-    for (const e of d.exercises) {
-      // a pool of size n with k picks per week can go floor(n/k) weeks without repeats
-      const perWeek = e.bodyPart === 'Core' ? 8 : d.main
-      const minGap = Math.floor(sizes[e.bodyPart] / perWeek) * 7
-      if (lastSeen.has(e.id)) assert.ok(i - lastSeen.get(e.id) >= minGap, `${e.id} repeated too soon`)
-      lastSeen.set(e.id, i)
-    }
-  }
+  assert.equal(dayInfo(addDays(settings.start_date, -1), settings), null) // before the start
+  assert.ok(dayInfo(addDays(settings.start_date, 400), settings)) // the plan has no end
+  // from mid-week: only the rest of that week
+  assert.deepEqual(plan({ from: '2026-10-01' }).map((d) => d.day), ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04'])
 })
 
 test('blocked exercises never appear; same inputs give same plan', () => {

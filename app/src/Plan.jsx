@@ -1,8 +1,10 @@
 import { useState } from 'react'
-import { addDays, dayInfo, daysBetween, formatDay, PLAN_WEEKS, planEnd, REST } from './plan.js'
+import { addDays, dayInfo, daysBetween, formatDay, REST, weekOf } from './plan.js'
 import { GroupSelect, Plate } from './ui.jsx'
 
-// "Re-plan week with AI" for the current week: idle, busy, then the result with an Undo.
+const SHORT = { day: 'numeric', month: 'short' }
+
+// "Re-plan week with AI": idle, busy, then the result with an Undo.
 function WeekCard({ week, days, ai, planned, planWithAi, restorePlans }) {
   const [phase, setPhase] = useState('idle')
   const [result, setResult] = useState(null)
@@ -48,87 +50,101 @@ export default function Plan({ exercises, data, setOverride, today, schedule, gr
   const logged = new Map()
   for (const l of data.logs) logged.set(l.day, [...(logged.get(l.day) ?? []), byId.get(l.exercise_id)])
   const currentWeek = Math.floor(daysBetween(settings.start_date, today) / 7) + 1
-  const [open, setOpen] = useState({ [currentWeek]: true })
+  const [open, setOpen] = useState({})
 
-  const weeks = Array.from({ length: PLAN_WEEKS }, (_, w) =>
-    Array.from({ length: 7 }, (_, k) => addDays(settings.start_date, w * 7 + k)))
-  const short = { day: 'numeric', month: 'short' }
+  const thisWeek = currentWeek >= 1 ? weekOf(today, settings) : []
+  // finished weeks, newest first
+  const pastWeeks = Array.from({ length: Math.max(0, currentWeek - 1) }, (_, k) => currentWeek - 1 - k)
+    .map((n) => ({ n, days: Array.from({ length: 7 }, (_, d) => addDays(settings.start_date, (n - 1) * 7 + d)) }))
+
+  const names = (items) => items.filter(Boolean).map((e) => e.name)
 
   return (
     <div className="page gap-26" style={{ paddingTop: 10 }}>
       <div className="stack stack-10">
-        <h2>26-week plan</h2>
-        <p className="muted-14 balance">
-          {formatDay(settings.start_date, { day: 'numeric', month: 'long', year: 'numeric' })} to {formatDay(addDays(planEnd(settings), -1), { day: 'numeric', month: 'long', year: 'numeric' })}.
-          {' '}AI plans each week's exercises when the week starts. Past days show what you logged.
-        </p>
+        <h2>Plan</h2>
+        <p className="muted-14 balance">AI plans each week's exercises when the week starts. Past weeks show what you logged.</p>
       </div>
 
-      {currentWeek >= 1 && currentWeek <= PLAN_WEEKS && (
-        <WeekCard
-          week={currentWeek} days={weeks[currentWeek - 1]} ai={ai} planWithAi={planWithAi} restorePlans={restorePlans}
-          planned={weeks[currentWeek - 1].some((d) => overrides[d]?.plan)}
-        />
+      {currentWeek < 1 && <p className="muted-14">Your plan starts {formatDay(settings.start_date, { day: 'numeric', month: 'long', year: 'numeric' })}.</p>}
+
+      {thisWeek.length > 0 && (
+        <>
+          <WeekCard
+            week={currentWeek} days={thisWeek} ai={ai} planWithAi={planWithAi} restorePlans={restorePlans}
+            planned={thisWeek.some((d) => overrides[d]?.plan)}
+          />
+          <div className="stack stack-20">
+            <h4>This week · {formatDay(thisWeek[0], SHORT)} – {formatDay(thisWeek[6], SHORT)}</h4>
+            {thisWeek.map((day) => {
+              const info = dayInfo(day, settings, overrides)
+              const past = day < today
+              const planning = ai.days?.includes(day) && !info.plan
+              const items = past ? names(logged.get(day) ?? []) : names((planned.get(day)?.exercises ?? []).filter((e) => !planning || info.added.includes(e.id)))
+              const empty = info.group === REST ? 'Rest' : past ? 'Nothing logged' : planning ? 'AI is planning…' : 'Not planned yet'
+              return (
+                <div className="planday" key={day}>
+                  <div>
+                    <Plate group={info.group} />
+                    <span className={day === today ? 'label accent-text' : 'label'}>{formatDay(day, { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                    <GroupSelect
+                      groups={groups}
+                      value={info.group}
+                      disabled={past}
+                      onChange={(g) => setOverride(day, { muscle_group: g })}
+                      aria-label={`Muscle group for ${formatDay(day, { dateStyle: 'full' })}`}
+                    />
+                  </div>
+                  <div className="detail">
+                    {items.length ? items.map((n, k) => <div key={k}>{n}</div>) : empty}
+                    {!past && info.plan && (
+                      <button className="btn btn-ghost" disabled={Boolean(ai.days)} onClick={() => planWithAi([day])}
+                        aria-label={`Re-plan ${formatDay(day, { dateStyle: 'full' })} with AI`}>
+                        {ai.days?.includes(day) ? 'Planning…' : 'Re-plan'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </>
       )}
 
-      <div>
-        {weeks.map((days, w) => {
-          const n = w + 1
-          const isOpen = Boolean(open[n])
-          const status = n === currentWeek ? 'This week' : days.some((d) => logged.has(d)) ? 'Logged' : ''
-          return (
-            <div key={n}>
-              <button className="weekhead" aria-expanded={isOpen} onClick={() => setOpen((o) => ({ ...o, [n]: !o[n] }))}>
-                <span><b>Week {n}</b><span className="status">{status}</span></span>
-                <span className="muted">{formatDay(days[0], short)} – {formatDay(days[6], short)}</span>
-              </button>
-              {isOpen && (
-                <div className="stack stack-20" style={{ padding: '4px 0 22px' }}>
-                  {days.map((day) => {
-                    const info = dayInfo(day, settings, overrides)
-                    const past = day < today
-                    const planning = ai.days?.includes(day) && !info.plan
-                    // Only AI (or swapped) lists are shown ahead of time. The preset rotation is just the
-                    // fallback for this week's days the AI could not plan.
-                    const shown = info.plan || (n === currentWeek && !planning)
-                    const items = past ? (logged.get(day) ?? [])
-                      : (planned.get(day)?.exercises ?? []).filter((e) => shown || info.added.includes(e.id))
-                    const detail = items.filter(Boolean).map((e) => e.name).join(', ')
-                      || (info.group === REST ? 'Rest' : past ? 'Nothing logged' : planning ? 'AI is planning…' : `Planned by AI on ${formatDay(days[0], short)}.`)
-                    return (
-                      <div className="planday" key={day}>
-                        <div>
-                          <Plate group={info.group} />
-                          <span className="label">{formatDay(day, { weekday: 'short', day: 'numeric', month: 'short' })}</span>
-                          <GroupSelect
-                            groups={groups}
-                            value={info.group}
-                            disabled={past}
-                            onChange={(g) => setOverride(day, { muscle_group: g })}
-                            aria-label={`Muscle group for ${formatDay(day, { dateStyle: 'full' })}`}
-                          />
+      {pastWeeks.length > 0 && (
+        <div>
+          <h4 style={{ marginBottom: 4 }}>Past weeks</h4>
+          {pastWeeks.map(({ n, days }) => {
+            const isOpen = Boolean(open[n])
+            return (
+              <div key={n}>
+                <button className="weekhead" aria-expanded={isOpen} onClick={() => setOpen((o) => ({ ...o, [n]: !o[n] }))}>
+                  <span><b>Week {n}</b><span className="status">{days.some((d) => logged.has(d)) ? 'Logged' : ''}</span></span>
+                  <span className="muted">{formatDay(days[0], SHORT)} – {formatDay(days[6], SHORT)}</span>
+                </button>
+                {isOpen && (
+                  <div className="stack stack-20" style={{ padding: '4px 0 22px' }}>
+                    {days.map((day) => {
+                      const info = dayInfo(day, settings, overrides)
+                      const items = names(logged.get(day) ?? [])
+                      return (
+                        <div className="planday" key={day}>
+                          <div>
+                            <Plate group={info.group} />
+                            <span className="label">{formatDay(day, { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                            <span>{info.group}</span>
+                          </div>
+                          <div className="detail">{items.length ? items.join(', ') : info.group === REST ? 'Rest' : 'Nothing logged'}</div>
                         </div>
-                        <div className="detail">
-                          {detail}
-                          {!past && info.plan && (
-                            <>
-                              {' '}
-                              <button className="btn btn-ghost" disabled={Boolean(ai.days)} onClick={() => planWithAi([day])}
-                                aria-label={`Re-plan ${formatDay(day, { dateStyle: 'full' })} with AI`}>
-                                {ai.days?.includes(day) ? 'Planning…' : 'Re-plan'}
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

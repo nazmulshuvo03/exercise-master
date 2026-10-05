@@ -1,6 +1,6 @@
 # Exercise Book
 
-Daily workout planner: one muscle group per day, 6 days a week, over a 26-week plan.
+Daily workout planner: one muscle group per day, 6 days a week, with the AI planning each week as it comes.
 Exercises rotate so the ones you did longest ago come first, with variety across sub-muscle tags.
 You log sets, reps and weight for each exercise, and you can mark an exercise as unavailable to get a replacement.
 

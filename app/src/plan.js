@@ -1,7 +1,6 @@
 // Rotation planner. Pure functions, no Supabase, so it can be tested with plain node.
 // Days are local 'YYYY-MM-DD' strings; arithmetic is done in UTC to dodge DST/timezone shifts.
 
-export const PLAN_WEEKS = 26
 export const REST = 'Rest'
 export const CORE = 'Core'
 
@@ -13,17 +12,17 @@ export const toDay = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() 
 export const addDays = (day, n) => new Date(ms(day) + n * DAY_MS).toISOString().slice(0, 10)
 export const daysBetween = (a, b) => Math.round((ms(b) - ms(a)) / DAY_MS)
 export const formatDay = (day, options) => new Date(ms(day)).toLocaleDateString('en-GB', { timeZone: 'UTC', ...options })
-export const planEnd =(settings) => addDays(settings.start_date, PLAN_WEEKS * 7)
 // The 7 days of the plan week that contains `day`.
 export const weekOf = (day, settings) => {
   const start = addDays(settings.start_date, Math.floor(daysBetween(settings.start_date, day) / 7) * 7)
   return Array.from({ length: 7 }, (_, k) => addDays(start, k))
 }
 
-// Muscle group and exercise counts for one day, or null when the day is outside the plan.
+// Muscle group and exercise counts for one day, or null when the day is before the plan starts.
+// The plan has no end: each week is planned by the AI when it comes.
 export function dayInfo(day, settings, overrides = {}) {
   const i = daysBetween(settings.start_date, day)
-  if (i < 0 || i >= PLAN_WEEKS * 7) return null
+  if (i < 0) return null
   const o = overrides[day] ?? {}
   const group = o.muscle_group ?? settings.week[i % 7]
   const rest = group === REST
@@ -116,7 +115,7 @@ function pick(pool, n, day, last) {
   return chosen
 }
 
-// Plan from `from` (inclusive) to the end of the 26 weeks.
+// Plan from `from` (inclusive) to the end of its week.
 // lastDone: Map exerciseId -> last day it was done before `from`.
 export function buildSchedule({ exercises, blocked, lastDone, settings, overrides, from }) {
   const byId = new Map(exercises.map((e) => [e.id, e]))
@@ -128,8 +127,9 @@ export function buildSchedule({ exercises, blocked, lastDone, settings, override
   }
   const last = new Map(lastDone)
   const days = []
-  const end = planEnd(settings)
-  for (let day = from > settings.start_date ? from : settings.start_date; day < end; day = addDays(day, 1)) {
+  const begin = from > settings.start_date ? from : settings.start_date
+  const end = addDays(weekOf(begin, settings)[6], 1)
+  for (let day = begin; day < end; day = addDays(day, 1)) {
     const info = dayInfo(day, settings, overrides)
     const added = info.added.map((id) => byId.get(id)).filter((e) => e && !blocked.has(e.id))
     added.forEach((e) => last.set(e.id, day))

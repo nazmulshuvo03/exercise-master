@@ -3,7 +3,7 @@ import { askAi, swapRequest } from './ai.js'
 import { saveLog, setBlocked } from './data.js'
 import Library from './Library.jsx'
 import { getRestSeconds, loadSkipped, saveSkipped } from './local.js'
-import { dayInfo, fallbackSwap, formatDay, planEnd, REST, swapCandidates, validateSwap, weekOf } from './plan.js'
+import { dayInfo, fallbackSwap, formatDay, REST, swapCandidates, validateSwap, weekOf } from './plan.js'
 import Summary from './Summary.jsx'
 import { familyOf, Overlay, Plate, Plated, useBackClosable } from './ui.jsx'
 import Workout from './Workout.jsx'
@@ -114,8 +114,7 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
     return (
       <div className="page">
         <p className="muted-14">
-          Your 26-week plan runs {formatDay(data.settings.start_date, { dateStyle: 'medium' })} to{' '}
-          {formatDay(planEnd(data.settings), { dateStyle: 'medium' })}. Change the start date in Settings.
+          Your plan starts {formatDay(data.settings.start_date, { dateStyle: 'medium' })}. Change the start date in Settings.
         </p>
         <button className="btn btn-secondary btn-start" onClick={() => setScreen('settings')}>Open Settings</button>
       </div>
@@ -272,7 +271,7 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
         </div>
         <div className="dateline">
           <span>{formatDay(today, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span>
-          <span>Week {info.week} of 26 · Day {info.weekDay}</span>
+          <span>Week {info.week} · Day {info.weekDay}</span>
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { saveSettings, setBlocked } from './data.js'
 import { getRestSeconds, REST_STEP, setRestSeconds } from './local.js'
-import { addDays, CORE, formatDay, planEnd } from './plan.js'
+import { addDays, CORE, formatDay } from './plan.js'
 import { supabase } from './supabase.js'
 import { GroupSelect, Plate, Stepper } from './ui.jsx'
 
@@ -58,8 +58,8 @@ export default function Settings({ exercises, data, userId, save, groups, email,
         </div>
         <span className="muted balance">
           {form.start_date
-            ? `Runs ${formatDay(form.start_date, longDay)} to ${formatDay(addDays(planEnd(form), -1), longDay)}. Every week starts on this weekday.`
-            : 'The 26-week plan starts here. Every week starts on this weekday.'}
+            ? `Starts ${formatDay(form.start_date, longDay)}. Every week starts on this weekday.`
+            : 'The plan starts here. Every week starts on this weekday.'}
         </span>
       </div>
 
