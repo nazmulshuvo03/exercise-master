@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { askAi } from './ai.js'
 import { deleteScan, saveScan } from './data.js'
 import { FIELDS, jsonIn, parseScan, PROMPT, SECTIONS } from './inbody.js'
 import { formatDay } from './plan.js'
-import { Overlay, useBackClosable } from './ui.jsx'
+import { useBackClosable } from './ui.jsx'
 
 const LONG = { day: 'numeric', month: 'long', year: 'numeric' }
-const COLUMNS = [['weight', 'Weight kg'], ['smm', 'SMM kg'], ['pbf', 'Fat %'], ['inbody_score', 'Score']]
+const SHORT = { day: 'numeric', month: 'short' }
+const LEAN = [['lean_left_arm', 'Left arm'], ['lean_right_arm', 'Right arm'], ['lean_trunk', 'Trunk'], ['lean_left_leg', 'Left leg'], ['lean_right_leg', 'Right leg']]
 
 // The form keeps what the user typed as strings; parseScan turns them into numbers on save.
 const toForm = (day, metrics = {}) => ({ day, ...Object.fromEntries(Object.entries(metrics).map(([k, v]) => [k, String(v)])) })
@@ -23,44 +24,10 @@ async function toJpeg(file, maxSide = 2000) {
   return canvas.toDataURL('image/jpeg', 0.85)
 }
 
-function Change({ scans, index, k }) {
-  const before = scans[index + 1]?.metrics[k]
-  const now = scans[index].metrics[k]
-  if (before == null || now == null || now === before) return null
-  const diff = Math.round((now - before) * 10) / 10
-  return <span className="change">{diff > 0 ? `+${diff}` : `−${-diff}`}</span>
-}
-
-// scans: data.scans (oldest first). Shown newest first, each value with its change since the scan
-// before. actions(scan), if given, renders the last cell of each row.
-function ScanTable({ scans, actions }) {
-  const rows = [...scans].reverse()
-  return (
-    <table className="scans">
-      <thead>
-        <tr>
-          <th scope="col">Date</th>
-          {COLUMNS.map(([key, title]) => <th key={key} scope="col">{title}</th>)}
-          {actions && <th scope="col"><span className="visually-hidden">Actions</span></th>}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((s, i) => (
-          <tr key={s.day}>
-            <th scope="row">{formatDay(s.day, { day: 'numeric', month: 'short', year: '2-digit' })}</th>
-            {COLUMNS.map(([key]) => <td key={key}>{s.metrics[key] ?? '–'} <Change scans={rows} index={i} k={key} /></td>)}
-            {actions && <td className="scan-actions">{actions(s)}</td>}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  )
-}
-
 // The add / edit page: photo, AI or pasted reply, and the form. initial: toForm() of the scan.
-function ScanEditor({ initial, data, userId, save, onSaved }) {
-  const [image, setImage] = useState(null) // { file, url } of the sheet photo, never stored
-  const [dragging, setDragging] = useState(false)
+function ScanEditor({ initial, existing, data, userId, save, onSaved, onDelete, onBack }) {
+  const [file, setFile] = useState(null) // the sheet photo, never stored
+  const [read, setRead] = useState(false) // the AI has filled the form once
   const [form, setForm] = useState(initial)
   const [pasted, setPasted] = useState('')
   const [status, setStatus] = useState('')
@@ -68,12 +35,10 @@ function ScanEditor({ initial, data, userId, save, onSaved }) {
   const [busy, setBusy] = useState(false)
   const otherAi = useRef(null)
 
-  useEffect(() => () => image && URL.revokeObjectURL(image.url), [image])
-
-  const pick = (file) => {
-    if (!file) return
-    if (!file.type.startsWith('image/')) return setStatus('That is not an image. Choose a photo or scan of the sheet.')
-    setImage({ file, url: URL.createObjectURL(file) })
+  const pick = (f) => {
+    if (!f) return
+    if (!f.type.startsWith('image/')) return setStatus('That is not an image. Choose a photo or scan of the sheet.')
+    setFile(f)
     setStatus('')
     setAiError('')
   }
@@ -91,7 +56,7 @@ function ScanEditor({ initial, data, userId, save, onSaved }) {
       `Filled ${found} of ${FIELDS.length} values.`,
       !day && 'No test date found, so check the date.',
       invalid.length && `Left out values that look wrong: ${invalid.join(', ')}.`,
-      'Check them against the sheet, then save.',
+      'Check them against the sheet before saving.',
     ].filter(Boolean).join(' '))
     return true
   }
@@ -102,7 +67,8 @@ function ScanEditor({ initial, data, userId, save, onSaved }) {
     setStatus('Reading the sheet…')
     let reason
     try {
-      if (!fill(await askAi('inbody', { image: await toJpeg(image.file) }))) reason = 'it found no values in the photo'
+      if (fill(await askAi('inbody', { image: await toJpeg(file) }))) setRead(true)
+      else reason = 'it found no values in the photo'
     } catch (err) {
       console.error(err)
       reason = err.message
@@ -149,59 +115,62 @@ function ScanEditor({ initial, data, userId, save, onSaved }) {
   const replacing = data.scans.some((s) => s.day === form.day)
 
   return (
-    <div className="scan-editor">
-      <div className="field-group">
-        <label
-          className={dragging ? 'drop dragging' : 'drop'}
-          onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(e) => { e.preventDefault(); setDragging(false); pick(e.dataTransfer.files[0]) }}
-        >
-          {image
-            ? <img src={image.url} alt="Your InBody sheet" />
-            : <span><b>Drop the InBody sheet here</b>or tap to choose a photo</span>}
-          <input type="file" accept="image/*" onChange={(e) => { pick(e.target.files[0]); e.target.value = '' }} />
-        </label>
-        <div className="scan-tools">
-          <button className="primary" disabled={!image || busy} onClick={readWithAi}>{busy ? 'Working…' : 'Read with AI'}</button>
-          {image && <button className="secondary" disabled={busy} onClick={() => setImage(null)}>Remove photo</button>}
-        </div>
+    <div className="page gap-22" style={{ paddingTop: 4, paddingBottom: 40 }}>
+      <div className="between">
+        <button className="btn btn-ghost" onClick={onBack}>‹ Body</button>
+        <span className="muted">{existing ? `Scan of ${formatDay(initial.day, LONG)}` : 'New InBody scan'}</span>
+      </div>
+
+      <label
+        className="drop halftone"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); pick(e.dataTransfer.files[0]) }}
+      >
+        <b>{file ? file.name : 'Add the InBody sheet'}</b>
+        <span className="muted">{file ? 'Photo added · tap to replace' : 'Take a photo or choose one'}</span>
+        <input type="file" accept="image/*" aria-label="InBody sheet photo" onChange={(e) => { pick(e.target.files[0]); e.target.value = '' }} />
+      </label>
+
+      <div className="stack stack-10">
+        <button className="btn btn-primary" style={{ height: 48, fontSize: 16 }} disabled={!file || busy} onClick={readWithAi}>
+          {status === 'Reading the sheet…' ? 'Reading the sheet…' : read ? 'Read again with AI' : 'Read with AI'}
+        </button>
         {aiError && (
-          <p className="ai-failed" role="alert">
-            <b>AI could not read the sheet</b>
-            Reason: {aiError}. Use another AI below: copy the prompt, give it the photo, and paste its reply. Or type the values.
+          <p className="alert" role="alert">
+            <b>AI could not read the sheet.</b> Reason: {aiError}. Use another AI below: copy the prompt, give it the photo, and paste its reply. Or type the values.
           </p>
         )}
-        {status && <p className="hint" role="status">{status}</p>}
-
-        <details className="other-ai" ref={otherAi}>
+        <span className="muted" role="status">{status || (file ? 'AI fills in the fields below from the photo.' : 'Add a photo first, or type the values in.')}</span>
+        <details ref={otherAi}>
           <summary>Use another AI instead</summary>
-          <p className="hint">Copy this prompt, give it to any AI together with the photo, and paste its reply here.</p>
-          <pre className="prompt">{PROMPT}</pre>
-          <button className="secondary" onClick={copyPrompt}>Copy prompt</button>
-          <label className="field">
-            Reply from the other AI
-            <textarea value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder='{"day": "2026-09-23", "weight": 82.2, …}' />
-          </label>
-          <button className="secondary" disabled={!pasted.trim()} onClick={fillFromPaste}>Fill the form</button>
+          <div className="stack stack-10" style={{ marginTop: 10 }}>
+            <p className="muted-14">Copy this prompt, give it to any AI together with the photo, and paste its reply here.</p>
+            <pre className="prompt">{PROMPT}</pre>
+            <button className="btn btn-secondary btn-start" onClick={copyPrompt}>Copy prompt</button>
+            <div className="field">
+              <label htmlFor="pasted">Reply from the other AI</label>
+              <textarea id="pasted" className="input" value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder='{"day": "2026-09-23", "weight": 82.2, …}' />
+            </div>
+            <button className="btn btn-secondary btn-start" disabled={!pasted.trim()} onClick={fillFromPaste}>Fill the form</button>
+          </div>
         </details>
       </div>
 
-      <form onSubmit={submit}>
-        <div className="field-group">
-          <label className="field">
-            Test date
-            <input type="date" required value={form.day} onChange={(e) => setForm((f) => ({ ...f, day: e.target.value }))} />
-          </label>
+      <form className="stack-20 stack" style={{ gap: 24 }} onSubmit={submit}>
+        <div className="field">
+          <label htmlFor="scan-day">Test date</label>
+          <input id="scan-day" className="input" type="date" required value={form.day} onChange={(e) => setForm((f) => ({ ...f, day: e.target.value }))} />
         </div>
         {SECTIONS.map((s) => (
-          <fieldset key={s.title} className="scan-section">
-            <legend className="section-head">{s.title}</legend>
-            <div className="scan-fields">
+          <fieldset key={s.title} className="stack stack-10" style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+            <legend style={{ padding: 0, marginBottom: 12 }}><h4>{s.title}</h4></legend>
+            <div className="fields">
               {s.fields.map((f) => (
-                <label key={f.key} className="field">
-                  {f.label}{f.unit && f.unit !== 'level' && f.unit !== 'points' && ` (${f.unit})`}
+                <div className="field" key={f.key}>
+                  <label htmlFor={`f-${f.key}`}>{f.label}{f.unit && f.unit !== 'level' && f.unit !== 'points' && ` (${f.unit})`}</label>
                   <input
+                    id={`f-${f.key}`}
+                    className="input"
                     type="number"
                     inputMode="decimal"
                     step="any"
@@ -210,59 +179,115 @@ function ScanEditor({ initial, data, userId, save, onSaved }) {
                     value={form[f.key] ?? ''}
                     onChange={(e) => setForm((v) => ({ ...v, [f.key]: e.target.value }))}
                   />
-                </label>
+                </div>
               ))}
             </div>
           </fieldset>
         ))}
-        <div className="save-bar">
-          {replacing && <span>Replaces the saved scan of this date</span>}
-          <button className="primary" disabled={busy}>Save scan</button>
-        </div>
+        {replacing && <p className="muted">Replaces the saved scan of this date.</p>}
+        <button className="btn btn-primary btn-lg" disabled={busy}>Save scan</button>
+        {existing && <button type="button" className="btn btn-ghost btn-start" onClick={onDelete}>Delete this scan</button>}
       </form>
     </div>
   )
 }
 
+// What changed since the scan before, in words: "−0.7 kg since 14 Sep". good: which direction is better.
+function change(now, before, unit, goodUp, since) {
+  if (now == null || before == null) return null
+  const d = Math.round((now - before) * 10) / 10
+  if (!d) return { text: 'No change', good: null }
+  return { text: `${d > 0 ? '+' : '−'}${Math.abs(d)} ${unit} since ${since}`, good: goodUp ? d > 0 : d < 0 }
+}
+
 export default function Body({ data, userId, save, today }) {
-  const [editing, open, close] = useBackClosable() // { label, form: toForm() } of the scan being added or edited
+  const [editing, open, close] = useBackClosable() // { form: toForm(), existing } of the scan being added or edited
   const [notice, setNotice] = useState('')
 
-  const remove = (day) => {
+  const remove = async (day) => {
     if (!confirm(`Delete the scan of ${formatDay(day, LONG)}?`)) return
-    save(() => deleteScan(userId, day), (d) => ({ scans: d.scans.filter((s) => s.day !== day) }))
+    const ok = await save(() => deleteScan(userId, day), (d) => ({ scans: d.scans.filter((s) => s.day !== day) }))
+    if (ok !== undefined) close()
   }
 
-  const onSaved = (day) => {
-    setNotice(`Saved the scan of ${formatDay(day, LONG)}.`)
-    close()
+  if (editing) {
+    return (
+      <ScanEditor
+        key={editing.form.day + editing.existing}
+        initial={editing.form} existing={editing.existing} data={data} userId={userId} save={save}
+        onSaved={(day) => { setNotice(`Saved the scan of ${formatDay(day, LONG)}.`); close() }}
+        onDelete={() => remove(editing.form.day)}
+        onBack={close}
+      />
+    )
   }
+
+  const scans = [...data.scans].reverse() // newest first
+  const [latest, before] = scans
+  const since = before ? formatDay(before.day, SHORT) : ''
+  const m = latest?.metrics ?? {}
+  const stats = latest && [
+    ['Weight', m.weight, 'kg', change(m.weight, before?.metrics.weight, 'kg', false, since)],
+    ['Skeletal muscle', m.smm, 'kg', change(m.smm, before?.metrics.smm, 'kg', true, since)],
+    ['Body fat', m.pbf, '%', change(m.pbf, before?.metrics.pbf, '%', false, since)],
+    ['InBody score', m.inbody_score, '/ 100', change(m.inbody_score, before?.metrics.inbody_score, 'pts', true, since)],
+  ]
+  const lean = LEAN.filter(([k]) => m[k] != null)
+  const maxLean = Math.max(1, ...lean.map(([k]) => m[k]))
 
   return (
-    <>
-      <header className="top">
-        <div className="body-head">
-          <h1>Body</h1>
-          <button className="primary" onClick={() => { setNotice(''); open({ label: 'New InBody scan', form: toForm(today) }) }}>Add new</button>
+    <div className="page gap-34" style={{ paddingTop: 10 }}>
+      <div className="between" style={{ alignItems: 'flex-start' }}>
+        <div className="stack stack-6">
+          <h2>Body</h2>
+          <span className="muted-14">{latest ? `Latest InBody scan, ${formatDay(latest.day, { day: 'numeric', month: 'short', year: 'numeric' })}` : 'InBody scans, newest first'}</span>
         </div>
-        <p className="subtitle">InBody results, newest first, with the change since the scan before.</p>
-      </header>
-      <main className="progress">
-        {notice && <p className="hint field-group" role="status">{notice}</p>}
-        {data.scans.length === 0
-          ? <p className="empty">No scans yet. Tap Add new and drop a photo of your InBody sheet.</p>
-          : <ScanTable scans={data.scans} actions={(s) => (
-            <>
-              <button className="link" onClick={() => { setNotice(''); open({ label: `Edit ${formatDay(s.day, LONG)}`, form: toForm(s.day, s.metrics) }) }}>Edit</button>
-              <button className="link" onClick={() => remove(s.day)}>Delete</button>
-            </>
-          )} />}
-      </main>
-      {editing && (
-        <Overlay title="InBody scan" label={editing.label} onClose={close}>
-          <ScanEditor initial={editing.form} data={data} userId={userId} save={save} onSaved={onSaved} />
-        </Overlay>
+        <button className="btn btn-primary" onClick={() => { setNotice(''); open({ form: toForm(today), existing: false }) }}>New scan</button>
+      </div>
+      {notice && <p className="status" role="status">{notice}</p>}
+      {!latest && <p className="muted-14">No scans yet. Tap New scan and add a photo of your InBody sheet.</p>}
+
+      {latest && (
+        <>
+          <div className="bodystats">
+            {stats.map(([label, val, unit, ch]) => (
+              <div className="stack stack-2" key={label}>
+                <span className="muted">{label}</span>
+                <span className="v">{val ?? '–'}{val != null && <small> {unit}</small>}</span>
+                {ch && <span className={ch.good === null ? 'muted' : ch.good ? 'status' : 'muted warn-text'}>{ch.text}</span>}
+              </div>
+            ))}
+          </div>
+
+          {lean.length > 0 && (
+            <div className="stack stack-2">
+              <h4 style={{ marginBottom: 6 }}>Segmental lean</h4>
+              {lean.map(([k, label]) => (
+                <div className="meter lean" key={k} style={{ gridTemplateColumns: '90px minmax(0, 1fr) 64px', padding: '5px 0' }}>
+                  <span>{label}</span>
+                  <span className="track" aria-hidden="true"><span style={{ width: `${(m[k] / maxLean) * 100}%` }} /></span>
+                  <span className="val">{m[k]} kg</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="stack stack-2">
+            <h4 style={{ marginBottom: 6 }}>Scan history</h4>
+            {scans.map((s) => (
+              <button
+                className="scanrow" key={s.day}
+                aria-label={`Edit scan of ${formatDay(s.day, LONG)}`}
+                onClick={() => { setNotice(''); open({ form: toForm(s.day, s.metrics), existing: true }) }}
+              >
+                <span>{formatDay(s.day, { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                <span>{s.metrics.weight != null ? `${s.metrics.weight} kg` : '–'}</span>
+                <span>{s.metrics.pbf != null ? `${s.metrics.pbf}% fat` : '–'}</span>
+              </button>
+            ))}
+          </div>
+        </>
       )}
-    </>
+    </div>
   )
 }

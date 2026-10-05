@@ -2,81 +2,85 @@ import { useEffect, useState } from 'react'
 import { askAi, swapRequest } from './ai.js'
 import { saveLog, setBlocked } from './data.js'
 import Library from './Library.jsx'
-import { dayInfo, fallbackSwap, formatDay, planEnd, REST, swapCandidates, validateSwap } from './plan.js'
-import { ExerciseInfo, GroupSelect, Overlay, useBackClosable } from './ui.jsx'
+import { getRestSeconds, loadSkipped, saveSkipped } from './local.js'
+import { dayInfo, fallbackSwap, formatDay, planEnd, REST, swapCandidates, validateSwap, weekOf } from './plan.js'
+import Summary from './Summary.jsx'
+import { familyOf, Overlay, Plate, Plated, useBackClosable } from './ui.jsx'
+import Workout from './Workout.jsx'
+import { bump, defaultRows, logRows, minutesFor, planText, replanSummary, setRows, setText } from './workout.js'
 
-// First-time rows: 3 × 10 reps, one 20-minute block, or 3 × 30-second intervals.
-const START = { Reps: [3, '10'], Minutes: [1, '20'], Seconds: [3, '30'] }
-const defaultRows = ([amount]) => {
-  const [n, value] = START[amount] ?? START.Reps
-  return Array.from({ length: n }, () => ({ reps: value, weight: '0' }))
-}
-const rowsOf = (log) => log.reps.map((r, i) => ({ reps: String(r), weight: String(Number(log.weights[i])) }))
-const sameRows = (a, b) =>
-  a.length === b.length && a.every((r, i) => Number(r.reps) === Number(b[i].reps) && Number(r.weight) === Number(b[i].weight))
-// Minutes + km (treadmill): speed is derived, not typed.
-const hasSpeed = (amount, load) => amount === 'Minutes' && load === 'km'
-const speed = (minutes, km) => (Number(minutes) > 0 ? `${(Number(km) / (Number(minutes) / 60)).toFixed(1)} km/h` : '–')
-const summary = (log, [amount, load]) =>
-  log.reps.map((r, i) => {
-    const w = Number(log.weights[i])
-    if (hasSpeed(amount, load)) return `${r} min, ${w} km (${speed(r, w)})`
-    return `${r} ${amount.toLowerCase()}${load ? ` @ ${w} ${load}` : ''}`
-  }).join(', ')
+const REASONS = [
+  { key: 'time', label: 'Only 30 minutes' },
+  { key: 'busy', label: 'Gym is busy' },
+  { key: 'shoulder', label: 'Shoulder feels off' },
+  { key: 'barbell', label: 'No barbell free' },
+]
 
-// One row per set: reps and weight.
-function SetsForm({ units: [amount, load], rows, saved, onChange, onSave }) {
-  const [busy, setBusy] = useState(false)
-  const changed = !saved || !sameRows(rows, saved)
-  const edit = (i, key) => (e) => onChange(rows.map((r, j) => (j === i ? { ...r, [key]: e.target.value } : r)))
+// "Re-plan with AI": pick a reason or say what is going on, then see what changed. onReplan({ note,
+// short }) resolves to { headline, changes, undo? }.
+function AiCard({ disabled, onReplan }) {
+  const [reason, setReason] = useState(null)
+  const [text, setText] = useState('')
+  const [phase, setPhase] = useState('idle') // idle | busy | done
+  const [result, setResult] = useState(null)
 
-  const submit = async (e) => {
-    e.preventDefault()
-    setBusy(true)
-    await onSave()
-    setBusy(false)
+  const reset = () => { setPhase('idle'); setReason(null); setText('') }
+  const run = async () => {
+    setPhase('busy')
+    const chip = REASONS.find((r) => r.key === reason)
+    try {
+      setResult(await onReplan({ note: [chip?.label, text.trim()].filter(Boolean).join('. '), short: reason === 'time' }))
+    } catch (err) {
+      console.error(err)
+      setResult({ headline: 'Could not re-plan', changes: [] })
+    }
+    setPhase('done')
   }
 
   return (
-    <form className="sets" onSubmit={submit}>
-      <table>
-        <thead>
-          <tr><th scope="col">Set</th><th scope="col">{amount}</th>{load && <th scope="col">{load}</th>}{hasSpeed(amount, load) && <th scope="col">Speed</th>}</tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i}>
-              <th scope="row">{i + 1}</th>
-              <td>
-                <input type="number" inputMode="numeric" min="1" max="500" required
-                  aria-label={`Set ${i + 1} ${amount.toLowerCase()}`} value={r.reps} onChange={edit(i, 'reps')} />
-              </td>
-              {load && (
-                <td>
-                  <input type="number" inputMode="decimal" min="0" max="9999" step="0.25" required
-                    aria-label={`Set ${i + 1} ${load}`} value={r.weight} onChange={edit(i, 'weight')} />
-                </td>
-              )}
-              {hasSpeed(amount, load) && <td className="speed"><output>{speed(r.reps, r.weight)}</output></td>}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="sets-actions">
-        <button type="button" className="secondary" onClick={() => onChange([...rows, { ...rows.at(-1) }])} disabled={rows.length >= 50}>+ Set</button>
-        <button type="button" className="secondary" onClick={() => onChange(rows.slice(0, -1))} disabled={rows.length <= 1}>− Set</button>
-        <button className="primary" disabled={busy || !changed}>{!changed ? 'Done ✓' : saved ? 'Update' : 'Done'}</button>
-      </div>
-    </form>
+    <section className="card" aria-label="Re-plan with AI">
+      <div className="card-kicker">Re-plan with AI</div>
+      {phase === 'idle' && (
+        <div className="stack">
+          <div className="card-title">Something different today?</div>
+          <div className="wrap">
+            {REASONS.map((r) => (
+              <button key={r.key} className="chip" aria-pressed={reason === r.key} onClick={() => setReason(reason === r.key ? null : r.key)}>{r.label}</button>
+            ))}
+          </div>
+          <input className="input" style={{ background: 'var(--color-bg)' }} placeholder="Or say what's going on" aria-label="What is going on" value={text} onChange={(e) => setText(e.target.value)} />
+          <button className="btn btn-primary btn-start" disabled={disabled || (!reason && !text.trim())} onClick={run}>Re-plan today</button>
+        </div>
+      )}
+      {phase === 'busy' && (
+        <div className="stack stack-6" role="status" style={{ padding: '8px 0' }}>
+          <div className="card-title">Re-planning…</div>
+          <div className="muted">Checking last week's logs and your unavailable equipment.</div>
+        </div>
+      )}
+      {phase === 'done' && (
+        <div className="stack stack-10" role="status">
+          <div className="card-title">{result.headline}</div>
+          {result.changes.map((c) => <div key={c} style={{ fontSize: 14, lineHeight: 1.45 }}>{c}</div>)}
+          <div className="wrap" style={{ marginTop: 4 }}>
+            {result.undo && <button className="btn btn-secondary" onClick={async () => { await result.undo(); reset() }}>Undo</button>}
+            <button className="btn btn-ghost" onClick={reset}>Re-plan again</button>
+          </div>
+        </div>
+      )}
+    </section>
   )
 }
 
-export default function Today({ exercises, data, userId, save, setOverride, today, schedule, groups, ai, planWithAi }) {
+export default function Today({ exercises, data, userId, save, setOverride, today, schedule, ai, planWithAi, restorePlans, screen, setScreen }) {
   const [index, setIndex] = useState(0)
-  const [drafts, setDrafts] = useState({}) // unsaved set rows by exercise id, kept while paging
-  const [picking, openPicker, closePicker] = useBackClosable()
-  const [status, setStatus] = useState('')
+  const [drafts, setDrafts] = useState({}) // planned sets ({ reps, kg }) by exercise id, once edited
+  const [skipped, setSkipped] = useState(() => loadSkipped(today))
+  const [rest, setRest] = useState(null) // seconds of the rest being shown, or null
+  const [busy, setBusy] = useState(false) // a set is being saved
   const [swapping, setSwapping] = useState(false)
+  const [status, setStatus] = useState('')
+  const [picking, openPicker, closePicker] = useBackClosable()
   const info = dayInfo(today, data.settings, data.overrides)
 
   const last = new Map()
@@ -88,65 +92,83 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
 
   // today's plan, plus anything already logged today that is no longer in it. While the AI plans
   // today, only hand-added exercises show, not the preset rotation it is about to replace.
-  const waiting = ai.days?.includes(today) && !info?.plan
+  const waiting = info && ai.days?.includes(today) && !info.plan
   const planned = (schedule[0]?.day === today ? schedule[0].exercises : []).filter((e) => !waiting || info.added.includes(e.id))
   const byId = new Map(exercises.map((e) => [e.id, e]))
   const list = [...planned, ...[...done.keys()].map((id) => byId.get(id)).filter((e) => e && !planned.includes(e))]
   const i = Math.max(0, Math.min(index, list.length - 1))
   const exercise = list[i]
 
-  useEffect(() => {
-    document.querySelector('.chip[aria-current]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  }, [i])
+  const basePlan = (e) => (last.has(e.id) ? logRows(last.get(e.id)) : defaultRows(e.units))
+  const editPlan = (e, fn) => setDrafts((d) => ({ ...d, [e.id]: fn(d[e.id] ?? basePlan(e)) }))
+  const rowsOf = (e) => setRows(drafts[e.id] ?? basePlan(e), done.get(e.id))
+  const isDone = (e, sk = skipped) => sk.has(e.id) || rowsOf(e).every((r) => r.done)
+  const rows = exercise && rowsOf(exercise)
+  const cur = rows ? rows.findIndex((r) => !r.done) : -1
+
+  useEffect(() => { // each exercise starts at the top
+    if (screen === 'workout') document.querySelector('.screen')?.scrollTo(0, 0)
+  }, [i, screen])
 
   if (!info) {
     return (
-      <>
-        <header className="top"><h1>Today</h1></header>
-        <main>
-          <p className="empty">
-            Your 26-week plan runs {formatDay(data.settings.start_date, { dateStyle: 'medium' })} to{' '}
-            {formatDay(planEnd(data.settings), { dateStyle: 'medium' })}. Change the start date in Settings.
-          </p>
-        </main>
-      </>
+      <div className="page">
+        <p className="muted-14">
+          Your 26-week plan runs {formatDay(data.settings.start_date, { dateStyle: 'medium' })} to{' '}
+          {formatDay(planEnd(data.settings), { dateStyle: 'medium' })}. Change the start date in Settings.
+        </p>
+        <button className="btn btn-secondary btn-start" onClick={() => setScreen('settings')}>Open Settings</button>
+      </div>
     )
+  }
+
+  const nextOpen = (sk) => {
+    for (let k = 1; k <= list.length; k++) {
+      const j = (i + k) % list.length
+      if (!isDone(list[j], sk)) return j
+    }
+    return -1
+  }
+  const advance = (sk = skipped) => {
+    const j = nextOpen(sk)
+    if (j < 0) setScreen('summary')
+    else setIndex(j)
   }
 
   const addExercise = (e) => {
     setOverride(today, { added: [...info.added, e.id] })
     setIndex(list.length) // the new exercise goes last
     closePicker()
+    setScreen('workout')
   }
-
   const removeAdded = (e) => setOverride(today, { added: info.added.filter((id) => id !== e.id) })
 
-  // Replaces a not-yet-done exercise in today's list with a similar one: the AI's pick, or the
-  // closest by tags when the AI is unavailable. permanent = also never plan it again.
-  const swap = async (e, permanent) => {
-    if (permanent && !confirm(`Mark “${e.name}” as unavailable? You'll get a similar ${e.bodyPart.toLowerCase()} exercise instead, and it won't be planned again. You can undo this in Settings.`)) return
+  // "Not in my gym": replaces a not-yet-done exercise in today's list with a similar one (the AI's
+  // pick, or the closest by tags when the AI is unavailable) and never plans the original again.
+  const notInMyGym = async (e) => {
+    if (!confirm(`Mark “${e.name}” as unavailable? You'll get a similar ${e.bodyPart.toLowerCase()} exercise instead, and it won't be planned again. You can undo this in Settings.`)) return
     const body = info.plan ?? planned.filter((x) => !info.added.includes(x.id)).map((x) => x.id)
     setSwapping(true)
     setStatus('')
     try {
       const ctx = {
         exercises,
-        blocked: permanent ? new Set(data.blocked).add(e.id) : data.blocked,
+        blocked: new Set(data.blocked).add(e.id),
         dayIds: list.map((x) => x.id),
         lastDone: new Map([...last].map(([id, l]) => [id, l.day])),
       }
       let next, why
       try {
-        const ai = await askAi('swap', swapRequest(e, swapCandidates(e, ctx), list))
-        next = validateSwap(ai, e, ctx)
-        why = typeof ai.why === 'string' ? ai.why.slice(0, 120) : ''
+        const answer = await askAi('swap', swapRequest(e, swapCandidates(e, ctx), list))
+        next = validateSwap(answer, e, ctx)
+        why = typeof answer.why === 'string' ? answer.why.slice(0, 120) : ''
       } catch (err) {
         console.error(err)
       }
       const aiPick = Boolean(next)
       next ??= fallbackSwap(e, ctx)
       // save() resolves to undefined on failure; setBlocked succeeds with null
-      if (permanent && await save(() => setBlocked(userId, e.id, true), (d) => ({ blocked: new Set(d.blocked).add(e.id) })) === undefined) return
+      if (await save(() => setBlocked(userId, e.id, true), (d) => ({ blocked: new Set(d.blocked).add(e.id) })) === undefined) return
       if (!next) return setStatus(`No similar ${e.bodyPart.toLowerCase()} exercise is left for “${e.name}”.`)
       if (!body.includes(e.id)) return
       await setOverride(today, { plan: body.map((id) => (id === e.id ? next.id : id)) })
@@ -156,103 +178,163 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
     }
   }
 
-  const logSets = async (e, rows) => {
-    const row = await save(
-      () => saveLog(userId, { exercise_id: e.id, day: today, reps: rows.map((r) => Number(r.reps)), weights: rows.map((r) => Number(r.weight)) }),
-      (d, row) => ({ logs: [...d.logs.filter((l) => l.id !== row.id), row] }),
-    )
-    if (!row) return
-    setDrafts((d) => {
-      const next = { ...d }
-      delete next[e.id]
-      return next
-    })
-    if (i < list.length - 1) setIndex(i + 1)
+  const skip = () => {
+    const next = new Set(skipped).add(exercise.id)
+    setSkipped(next)
+    saveSkipped(today, next)
+    advance(next)
   }
 
-  const saved = exercise && done.get(exercise.id)
-  const previous = exercise && last.get(exercise.id)
-  const logged = saved ?? previous
-  const rows = exercise && (drafts[exercise.id] ?? (logged ? rowsOf(logged) : defaultRows(exercise.units)))
+  const plain = (rs) => rs.map(({ reps, kg }) => ({ reps, kg }))
+  const adjust = (field, delta, min) =>
+    editPlan(exercise, (plan) => plan.map((r, k) => (k === cur ? { ...r, [field]: bump(r[field], delta, min) } : r)))
+  const addSet = () => editPlan(exercise, () => [...plain(rows), { ...plain(rows).at(-1) }])
+  const removeSet = () => editPlan(exercise, () => plain(rows.slice(0, -1)))
+
+  // Saves the whole log of the exercise with this set added, copies its load to the sets still to
+  // do, and starts the rest.
+  const logSet = async () => {
+    const set = rows[cur]
+    const logged = [...rows.filter((r) => r.done), set]
+    setBusy(true)
+    const row = await save(
+      () => saveLog(userId, { exercise_id: exercise.id, day: today, reps: logged.map((r) => r.reps), weights: logged.map((r) => r.kg) }),
+      (d, row) => ({ logs: [...d.logs.filter((l) => l.id !== row.id), row] }),
+    )
+    setBusy(false)
+    if (!row) return
+    editPlan(exercise, () => plain(rows).map((r, k) => (k > cur ? { ...r, kg: set.kg } : r)))
+    setStatus('')
+    setRest(getRestSeconds())
+  }
+
+  // After the rest: stay while the exercise has sets left, else go to the next unfinished one.
+  const endRest = () => {
+    setRest(null)
+    if (cur < 0) advance()
+  }
+  const restNext = () => {
+    if (cur >= 0) return `Set ${cur + 1}, ${setText(exercise.units, rows[cur])}`
+    const j = nextOpen(skipped)
+    return j < 0 ? 'Finish the workout' : list[j].name
+  }
+
+  // The AI card. Started exercises stay; the rest of today's list is planned again.
+  const replan = async ({ note, short }) => {
+    const before = info.plan ?? planned.filter((e) => !info.added.includes(e.id)).map((e) => e.id)
+    const result = await planWithAi([today], { note, short })
+    const after = result.plans[today]
+    setIndex(0)
+    if (!after) return { headline: result.message || 'Nothing changed', changes: [] }
+    const { headline, changes } = replanSummary(before, after, (id) => byId.get(id)?.name ?? '')
+    return { headline, changes: result.focus ? [...changes, result.focus] : changes, undo: () => restorePlans(result.prev) }
+  }
+
+  const allDone = list.length > 0 && list.every((e) => isDone(e))
+  const startedAny = list.some((e) => rowsOf(e).some((r) => r.done))
+  const firstOpen = list.findIndex((e) => !isDone(e))
+  const start = () => {
+    if (allDone) return setScreen('summary')
+    setIndex(Math.max(0, firstOpen))
+    setScreen('workout')
+  }
+  const leave = () => { setRest(null); setScreen(null) }
+
+  if (screen === 'workout' && exercise) {
+    return (
+      <Workout
+        list={list} i={i} setIndex={setIndex} exercise={exercise} rows={rows} cur={cur}
+        previous={last.get(exercise.id)} isDone={isDone} added={info.added.includes(exercise.id)}
+        busy={busy} swapping={swapping} status={status}
+        onLeave={leave} onLog={logSet} onAdjust={adjust} onAddSet={addSet} onRemoveSet={removeSet}
+        onSkip={skip} onNotInMyGym={() => notInMyGym(exercise)} onRemoveAdded={() => removeAdded(exercise)}
+        onFinish={() => setScreen('summary')}
+        rest={rest} restNext={rest != null ? restNext() : ''} onEndRest={endRest}
+      />
+    )
+  }
+
+  if (screen === 'summary') {
+    return <Summary data={data} today={today} info={info} byId={byId} done={done} onClose={() => setScreen(null)} />
+  }
+
+  const totalSets = list.reduce((n, e) => n + rowsOf(e).length, 0)
+  const isRest = info.group === REST
+  const family = familyOf(info.group)
+  const week = weekOf(today, data.settings)
 
   return (
-    <>
-      <header className="top" data-group={info.group}>
-        <div className="today-head">
-          <h1>{info.group === REST ? 'Rest day' : info.group}</h1>
-          <GroupSelect groups={groups} value={info.group} onChange={(g) => setOverride(today, { muscle_group: g })} aria-label="Muscle group for today" />
+    <div className="page">
+      <div className="stack">
+        <div className="between">
+          <span style={{ fontWeight: 600, fontSize: 18 }}>Routine</span>
+          <button className="btn btn-ghost" onClick={() => setScreen('settings')}>Settings</button>
         </div>
-        <p className="subtitle">
-          {formatDay(today, { weekday: 'long', day: 'numeric', month: 'long' })}, week {info.week} day {info.weekDay}. {done.size} of {list.length} done.
-          {/* once something is logged, single swaps fit better than a whole new list */}
-          {info.main + info.core > 0 && !done.size && (
-            <>
-              {' '}
-              <button className="link" disabled={Boolean(ai.days)} onClick={async () => { setStatus(''); setIndex(0); setStatus(await planWithAi([today])) }}>
-                {ai.days?.includes(today) ? 'AI is planning…' : 'Re-plan today with AI'}
-              </button>
-            </>
-          )}
-        </p>
-        <nav className="chips" aria-label="Today's exercises">
-          {list.map((e, j) => (
-            <button key={e.id} className={done.has(e.id) ? 'chip done' : 'chip'} aria-current={j === i ? 'step' : undefined} onClick={() => setIndex(j)}>
-              {j + 1}. {e.name}
+        <div className="dateline">
+          <span>{formatDay(today, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span>
+          <span>Week {info.week} of 26 · Day {info.weekDay}</span>
+        </div>
+      </div>
+
+      <div className="stack">
+        <div className="kicker"><Plate group={info.group} />{isRest ? 'Rest day' : `${family ? `${family} day` : info.group}`}</div>
+        <h1 className="headline"><Plated>{info.group}</Plated></h1>
+        {list.length > 0 ? (
+          <>
+            <div style={{ fontSize: 15 }}>{list.length} exercises · about {minutesFor(totalSets)} min</div>
+            <div className="segments" aria-hidden="true">
+              {list.map((e) => <span key={e.id} className={isDone(e) ? 'on' : ''} />)}
+            </div>
+            <button className="btn btn-primary btn-lg btn-spread" style={{ marginTop: 4 }} onClick={start}>
+              <span>{allDone ? 'Workout logged' : startedAny ? 'Continue workout' : 'Start workout'}</span>
+              <span className="meta">{allDone ? 'View summary' : startedAny ? `Exercise ${firstOpen + 1}` : ''}</span>
             </button>
-          ))}
-          <button className="chip add" onClick={() => openPicker(true)}>+ Add exercise</button>
-        </nav>
-      </header>
+          </>
+        ) : (
+          <p className="muted-14" role="status">{waiting ? 'AI is planning today’s workout…' : 'Nothing planned. Enjoy the rest, or add an exercise.'}</p>
+        )}
+      </div>
 
-      {status && <p className="hint swap-status" role="status">{status}</p>}
+      {list.length > 0 && <AiCard disabled={Boolean(ai.days)} onReplan={replan} />}
 
-      {!exercise && (
-        <main>
-          <p className="empty">{waiting ? 'AI is planning today’s workout…' : 'Nothing planned. Enjoy the rest, or add an exercise.'}</p>
-        </main>
-      )}
-
-      {exercise && (
-        <main className="exercise" key={exercise.id} data-group={exercise.bodyPart}>
-          <section className="exercise-log" aria-labelledby="exercise-name">
-            <p className="exercise-count">
-              Exercise {i + 1} of {list.length}
-              {exercise.bodyPart !== info.group && <span className="badge" data-group={exercise.bodyPart}>{exercise.bodyPart}</span>}
-              {info.added.includes(exercise.id) && <span className="badge">Added</span>}
-            </p>
-            <h2 id="exercise-name">{exercise.name}</h2>
-            <p className="card-meta">
-              {previous ? `Last time, ${formatDay(previous.day, { day: 'numeric', month: 'short' })}: ${summary(previous, exercise.units)}` : 'First time'}
-            </p>
-            <SetsForm
-              units={exercise.units}
-              rows={rows}
-              saved={saved && rowsOf(saved)}
-              onChange={(r) => setDrafts((d) => ({ ...d, [exercise.id]: r }))}
-              onSave={() => logSets(exercise, rows)}
-            />
-            {info.added.includes(exercise.id)
-              ? <button className="link" onClick={() => removeAdded(exercise)}>Remove from today</button>
-              : (
-                <div className="swap-actions">
-                  {!saved && <button className="link" disabled={swapping} onClick={() => swap(exercise, false)}>{swapping ? 'Finding a replacement…' : 'Skip today'}</button>}
-                  <button className="link" disabled={swapping} onClick={() => swap(exercise, true)}>Not available in my gym</button>
-                </div>
-              )}
-          </section>
-          <section className="exercise-info" aria-label="How to do it">
-            <ExerciseInfo exercise={exercise} />
-          </section>
-        </main>
-      )}
-
-      {exercise && (
-        <div className="pager">
-          <button className="secondary" onClick={() => setIndex(i - 1)} disabled={i === 0}>‹ Previous</button>
-          <span>{i + 1} / {list.length}</span>
-          <button className="secondary" onClick={() => setIndex(i + 1)} disabled={i >= list.length - 1}>Next ›</button>
+      <div>
+        <div className="listhead">
+          <h4>Today's exercises</h4>
+          {list.length > 0 && <span className="muted">{list.filter((e) => isDone(e)).length} of {list.length} done</span>}
         </div>
-      )}
+        {list.map((e, j) => {
+          const rs = rowsOf(e)
+          const n = rs.filter((r) => r.done).length
+          const status = skipped.has(e.id) ? ['Skipped', true] : n === rs.length ? ['Done'] : n ? [`${n} of ${rs.length}`] : []
+          return (
+            <button key={e.id} className="rowbtn" onClick={() => { setIndex(j); setScreen('workout') }}>
+              <span className="idx">{j + 1}</span>
+              <span>
+                <span className="name">{e.name}</span>
+                <span className="muted">{planText(e.units, rs)}{e.bodyPart === 'Core' && info.group !== 'Core' ? ' · core' : ''}</span>
+              </span>
+              <span className={status[1] ? 'status quiet' : 'status'}>{status[0]}</span>
+            </button>
+          )
+        })}
+        <button className="btn btn-ghost btn-start" style={{ marginTop: 6 }} onClick={() => openPicker(true)}>+ Add exercise</button>
+      </div>
+
+      <div className="stack stack-2">
+        <h4 style={{ marginBottom: 8 }}>This week</h4>
+        {week.map((day) => {
+          const d = dayInfo(day, data.settings, data.overrides)
+          if (!d) return null
+          return (
+            <div className="weekrow" key={day}>
+              <span className="day">{formatDay(day, { weekday: 'short' })}</span>
+              <Plate group={d.group} />
+              <span className={day === today ? 'today' : ''}>{d.group}</span>
+              <span className="note">{day === today ? 'Today' : ''}</span>
+            </div>
+          )
+        })}
+      </div>
 
       {picking && (
         <Overlay title="Add exercise" label={formatDay(today, { weekday: 'long' })} onClose={closePicker}>
@@ -264,6 +346,6 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
           />
         </Overlay>
       )}
-    </>
+    </div>
   )
 }

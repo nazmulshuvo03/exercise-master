@@ -12,7 +12,7 @@ const pad = (n) => String(n).padStart(2, '0')
 export const toDay = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 export const addDays = (day, n) => new Date(ms(day) + n * DAY_MS).toISOString().slice(0, 10)
 export const daysBetween = (a, b) => Math.round((ms(b) - ms(a)) / DAY_MS)
-export const formatDay = (day, options) => new Date(ms(day)).toLocaleDateString(undefined, { timeZone: 'UTC', ...options })
+export const formatDay = (day, options) => new Date(ms(day)).toLocaleDateString('en-GB', { timeZone: 'UTC', ...options })
 export const planEnd =(settings) => addDays(settings.start_date, PLAN_WEEKS * 7)
 // The 7 days of the plan week that contains `day`.
 export const weekOf = (day, settings) => {
@@ -43,15 +43,15 @@ export function dayInfo(day, settings, overrides = {}) {
 
 // Per day, keeps the AI's list only when it has exactly the expected main and core exercises, all
 // real, unblocked, from the right group, no duplicates, and none of `taken` (ids planned on the
-// week's other days). Returns { day: [ids] } for accepted days; the rest keep what they had (an
-// earlier plan or the preset rotation).
+// week's other days), and every id in the day's `keep` (exercises already started today). Returns
+// { day: [ids] } for accepted days; the rest keep what they had (an earlier plan or the preset rotation).
 export function validateWeek(response, { exercises, blocked, infos, taken }) {
   const byId = new Map(exercises.map((e) => [e.id, e]))
   const used = new Set(taken)
   const accepted = {}
   for (const { day, exercises: ids } of Array.isArray(response?.days) ? response.days : []) {
     const info = infos.find((i) => i.day === day)
-    if (!info || !Array.isArray(ids) || new Set(ids).size !== ids.length) continue
+    if (!info || !Array.isArray(ids) || new Set(ids).size !== ids.length || info.keep?.some((id) => !ids.includes(id))) continue
     const picked = ids.map((id) => byId.get(id))
     if (picked.some((e) => !e || blocked.has(e.id) || used.has(e.id))) continue
     const count = (group) => picked.filter((e) => e.bodyPart === group).length

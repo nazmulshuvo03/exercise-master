@@ -1,27 +1,27 @@
 import { useMemo, useState } from 'react'
 import { bodyPartsOf } from './data.js'
-import { Avatar, useDetail } from './ui.jsx'
+import { musclesOf, Plate, Thumb, useDetail } from './ui.jsx'
 
-const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-')
-
-// Searchable exercise list. Rows open the detail view, or call onPick when given.
-export default function Library({ exercises, blocked, title = 'Exercises', onPick }) {
+// Searchable exercise list. Rows open the detail view, or call onPick when given. A search looks at
+// every group; with none, the selected group's exercises show.
+export default function Library({ exercises, blocked, title = 'Library', onPick }) {
+  const groups = useMemo(() => bodyPartsOf(exercises), [exercises])
+  const [group, setGroup] = useState(null)
   const [query, setQuery] = useState('')
   const [open, detail] = useDetail()
 
-  const groups = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    const match = (e) => !q || e.name.toLowerCase().includes(q) || e.tags.some((t) => t.toLowerCase().includes(q))
-    return bodyPartsOf(exercises)
-      .map((part) => ({ part, items: exercises.filter((e) => e.bodyPart === part && match(e)) }))
-      .filter((g) => g.items.length)
-  }, [query, exercises])
+  const q = query.trim().toLowerCase()
+  const selected = group && groups.includes(group) ? group : groups[0]
+  const items = exercises.filter((e) => (q
+    ? `${e.name} ${musclesOf(e)}`.toLowerCase().includes(q)
+    : e.bodyPart === selected))
 
   return (
-    <>
-      <header className="top">
-        <h1>{title}</h1>
+    <div className="page flush" style={{ gap: 18, paddingTop: 10 }}>
+      <div className="stack pad">
+        <h2>{title}</h2>
         <input
+          className="input input-lg"
           type="search"
           placeholder={`Search ${exercises.length} exercises or muscles`}
           value={query}
@@ -29,38 +29,28 @@ export default function Library({ exercises, blocked, title = 'Exercises', onPic
           aria-label="Search exercises"
           autoFocus={!!onPick}
         />
-        <nav className="jump" aria-label="Body parts">
-          {groups.map((g) => (
-            <a key={g.part} data-group={g.part} href={`#${slug(g.part)}`}>{g.part}</a>
-          ))}
-        </nav>
-      </header>
-
-      <main>
-        {groups.length === 0 && <p className="empty">No exercises match “{query}”.</p>}
+      </div>
+      <div className="chips" role="group" aria-label="Muscle groups">
         {groups.map((g) => (
-          <section key={g.part} id={slug(g.part)} data-group={g.part} aria-labelledby={`h-${slug(g.part)}`}>
-            <h2 className="section-head" id={`h-${slug(g.part)}`}>
-              {g.part} <span>{g.items.length}</span>
-            </h2>
-            <ul className="tiles">
-              {g.items.map((e) => (
-                <li key={e.id}>
-                  <button className={blocked.has(e.id) ? 'tile unavailable' : 'tile'} onClick={() => (onPick ?? open)(e)}>
-                    <Avatar exercise={e} />
-                    <span className="row-name">{e.name}</span>
-                    <span className="row-tags">
-                      {blocked.has(e.id) && <span className="badge">Unavailable</span>} {e.tags.filter((t) => t !== e.bodyPart).join(', ')}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
+          <button key={g} className="chip ink" aria-pressed={!q && g === selected} onClick={() => { setGroup(g); setQuery('') }}>
+            <Plate group={g} small />{g}
+          </button>
         ))}
-      </main>
-
+      </div>
+      <div className="pad">
+        <div className="muted" style={{ marginBottom: 6 }}>{q ? `${items.length} results for “${query.trim()}”` : `${selected} · ${items.length}`}</div>
+        {items.map((e) => (
+          <button key={e.id} className="libitem" onClick={() => (onPick ?? open)(e)}>
+            <Thumb exercise={e} />
+            <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span className="name">{e.name}</span>
+              <span className="muted">{musclesOf(e)}</span>
+              {blocked.has(e.id) && <span className="warn-text" style={{ fontSize: 12 }}>Not in my gym</span>}
+            </span>
+          </button>
+        ))}
+      </div>
       {detail}
-    </>
+    </div>
   )
 }

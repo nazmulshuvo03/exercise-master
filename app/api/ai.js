@@ -12,17 +12,19 @@ const MAX_IMAGE = 3_000_000 // the browser sends a JPEG of at most 2000 px a sid
 const SYSTEM = 'You are a strength coach inside a workout app. Reply with one JSON object only, no prose, no markdown.'
 
 const PROMPTS = {
-  week: ({ week, days, history, body, catalog }) => `Plan the gym days in "days" the way an experienced personal trainer would. Work through these steps before you choose:
+  week: ({ week, days, history, body, catalog, note }) => `Plan the gym days in "days" the way an experienced personal trainer would. Work through these steps before you choose:
 1. History: for each day's muscle group, find its last 2-3 sessions in "history" and which sub-muscles (catalog tags), angles and movement patterns they hit, and whether reps or load went up.
 2. Variation: bias each new session toward the sub-muscles and angles the last session of that group hit least (for example incline after a week of flat pressing, the long head after short-head curls, hamstrings after a quad-heavy leg day). This is a preference, not a rule: keep 1-2 key compound lifts from last time when the user is progressing on them (progressive overload needs the same lift for a few weeks), and rotate the accessory work around them.
 3. Balance: across the session cover the group's main sub-muscles; mix free weights, cables and machines; order big compound lifts first, then isolation work.
 4. Week: "week" lists every day of this plan week; "planned" on a day is what the user will already do then. Read those days and "history" together. Do not hit a muscle hard that was trained heavily the day before or will be the day after (for example front delts next to a chest pressing day, biceps next to a heavy back day), and make the new session complement the rest of the week instead of repeating its angles.
 5. Body: "body" holds the user's InBody scans, oldest first (smm = skeletal muscle mass, pbf = percent body fat, lean_* and fat_* = segmental kg). Read the trend. Falling muscle or rising fat: favour big compound lifts. One limb clearly weaker in segmental lean: add unilateral (single-arm or single-leg) work for it. No scans: skip this step.
 6. "avoid" on a day lists exercises the user rejected for that day. Choose others unless the group has no suitable alternative.
+7. "keep" on a day lists exercises the user already started today: every one of them must be in that day's list. "note" is what the user says about the session (for example the gym is busy, a joint feels off, a machine is taken): follow it when you choose.
 Hard rules, a day that breaks one is discarded: exactly "main" exercises whose group equals the day's group, plus exactly "core" exercises whose group is "Core"; only ids from catalog.
 Return {"days":[{"day":"YYYY-MM-DD","focus":"<max 20 words: what this session emphasises and why>","exercises":[id,...]}]} with one entry per day in "days", exercises in the order to do them.
 week: ${JSON.stringify(week)}
 days: ${JSON.stringify(days)}
+note: ${JSON.stringify(typeof note === 'string' ? note.slice(0, 300) : null)}
 history (last 3 weeks, oldest first): ${JSON.stringify(history)}
 body: ${JSON.stringify(body)}
 catalog: ${JSON.stringify(catalog)}`,
