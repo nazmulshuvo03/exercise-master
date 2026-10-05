@@ -3,9 +3,11 @@
 // and returns its JSON. Business rules are validated in the browser (plan.js), not here.
 // Only raw Node req/res APIs are used so Vercel and the dev middleware can share this file.
 import { createClient } from '@supabase/supabase-js'
+import { jsonIn, PROMPT as INBODY_PROMPT } from '../src/inbody.js'
 
 const MAX_CALLS_PER_DAY = 30
 const MAX_BODY = 100_000
+const MAX_IMAGE = 3_000_000 // the browser sends a JPEG of at most 2000 px a side, well under this
 
 const SYSTEM = 'You are a strength coach inside a workout app. Reply with one JSON object only, no prose, no markdown.'
 
@@ -18,6 +20,10 @@ catalog: ${JSON.stringify(catalog)}`,
   swap: ({ exercise, dayExercises, candidates }) => `The user wants to skip or avoid "${exercise.name}" (tags: ${exercise.tags.join(', ')}). Pick the most similar replacement from candidates: same target muscle and movement pattern, and not a duplicate of what they already do today (${dayExercises.join(', ')}).
 Return {"id":<candidate id>,"why":"<max 12 words>"}.
 candidates: ${JSON.stringify(candidates)}`,
+
+  inbody: ({ image }) => typeof image === 'string' && image.length < MAX_IMAGE && /^data:image\/(jpeg|png|webp);base64,/.test(image)
+    ? [{ type: 'text', text: INBODY_PROMPT }, { type: 'image_url', image_url: { url: image } }]
+    : undefined,
 }
 
 const send = (res, status, body) => {
@@ -28,7 +34,7 @@ const send = (res, status, body) => {
 
 export default async function handler(req, res) {
   try {
-    const { AI_BASE_URL, AI_API_KEY, AI_MODEL, VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY } = process.env
+    const { AI_BASE_URL, AI_API_KEY, AI_MODEL, AI_VISION_MODEL, VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY } = process.env
     if (!AI_BASE_URL || !AI_API_KEY || !AI_MODEL) return send(res, 500, { error: 'AI is not configured' })
     if (req.method !== 'POST') return send(res, 405, { error: 'POST only' })
 
@@ -41,7 +47,8 @@ export default async function handler(req, res) {
     if (!user) return send(res, 401, { error: 'Sign in again' })
 
     const body = req.body
-    const prompt = body && JSON.stringify(body).length < MAX_BODY ? PROMPTS[body.action]?.(body) : undefined
+    const limit = body?.action === 'inbody' ? MAX_IMAGE + 1000 : MAX_BODY
+    const prompt = body && JSON.stringify(body).length < limit ? PROMPTS[body.action]?.(body) : undefined
     if (!prompt) return send(res, 400, { error: 'Bad request' })
 
     const { data: allowed, error } = await supabase.rpc('ai_take_call', { max_calls: MAX_CALLS_PER_DAY })
@@ -52,17 +59,18 @@ export default async function handler(req, res) {
       method: 'POST',
       headers: { Authorization: `Bearer ${AI_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: AI_MODEL,
+        // reading a photo needs a vision model; AI_VISION_MODEL is for when AI_MODEL is text-only
+        model: body.action === 'inbody' ? AI_VISION_MODEL || AI_MODEL : AI_MODEL,
         messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt }],
         // no response_format: json_object mode makes some free models emit only whitespace until max_tokens
         max_tokens: 4000,
       }),
       signal: AbortSignal.timeout(90_000), // the free reasoning model took 6-56s in tests
     })
+    if (ai.status === 429) return send(res, 503, { error: 'AI model is busy' }) // free models are rate-limited upstream
     if (!ai.ok) throw new Error(`model returned ${ai.status}: ${(await ai.text()).slice(0, 200)}`)
     const content = (await ai.json()).choices?.[0]?.message?.content ?? ''
-    // the model may wrap the object in a ``` fence or a sentence; keep from the first { to the last }
-    send(res, 200, JSON.parse(content.slice(content.indexOf('{'), content.lastIndexOf('}') + 1)))
+    send(res, 200, jsonIn(content)) // the model may wrap the object in a ``` fence or a sentence
   } catch (err) {
     console.error('ai:', err)
     send(res, 502, { error: 'AI request failed' })

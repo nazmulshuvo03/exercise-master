@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { planDays } from './ai.js'
+import Body from './Body.jsx'
 import { bodyPartsOf, fetchExercises, fetchUserData, saveOverride } from './data.js'
 import Library from './Library.jsx'
 import Plan from './Plan.jsx'
@@ -10,7 +11,7 @@ import Settings from './Settings.jsx'
 import { supabase } from './supabase.js'
 import Today from './Today.jsx'
 
-const TABS = ['Home', 'Today', 'Plan', 'Progress', 'Exercises', 'Settings']
+const TABS = ['Home', 'Today', 'Plan', 'Progress', 'Body', 'Exercises', 'Settings']
 
 function Login() {
   const [message, setMessage] = useState('')
@@ -149,6 +150,7 @@ function Workspace({ userId, email }) {
       {tab === 'Today' && <Today {...props} />}
       {tab === 'Plan' && <Plan {...props} />}
       {tab === 'Progress' && <Progress {...props} />}
+      {tab === 'Body' && <Body {...props} />}
       {tab === 'Exercises' && <Library exercises={exercises} blocked={data.blocked} />}
       {tab === 'Settings' && <Settings {...props} email={email} />}
       <nav className="tabs" aria-label="Sections">

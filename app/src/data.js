@@ -46,17 +46,19 @@ async function fetchSettings(userId) {
 }
 
 export async function fetchUserData(userId) {
-  const [settings, overrides, logs, blocked] = await Promise.all([
+  const [settings, overrides, logs, blocked, scans] = await Promise.all([
     fetchSettings(userId),
     fetchAll(() => supabase.from('day_overrides').select('*').order('day')),
     fetchAll(() => supabase.from('workout_logs').select('*').order('day').order('id')),
     fetchAll(() => supabase.from('blocked_exercises').select('exercise_id')),
+    fetchAll(() => supabase.from('body_scans').select('day, metrics').order('day')),
   ])
   return {
     settings,
     overrides: Object.fromEntries(overrides.map((o) => [o.day, o])),
     logs,
     blocked: new Set(blocked.map((b) => b.exercise_id)),
+    scans, // [{ day, metrics }] sorted by day, see inbody.js
   }
 }
 
@@ -83,3 +85,11 @@ export const setBlocked = async (userId, exerciseId, blocked) =>
   check(blocked
     ? await supabase.from('blocked_exercises').insert({ user_id: userId, exercise_id: exerciseId })
     : await supabase.from('blocked_exercises').delete().eq('user_id', userId).eq('exercise_id', exerciseId))
+
+export const saveScan = async (userId, scan) =>
+  check(await supabase.from('body_scans')
+    .upsert({ user_id: userId, ...scan }, { onConflict: 'user_id,day' })
+    .select('day, metrics').single())
+
+export const deleteScan = async (userId, day) =>
+  check(await supabase.from('body_scans').delete().eq('user_id', userId).eq('day', day))

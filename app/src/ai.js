@@ -12,7 +12,7 @@ export async function askAi(action, body) {
     body: JSON.stringify({ action, ...body }),
     signal: AbortSignal.timeout(100_000), // longer than the server's model timeout in api/ai.js
   })
-  if (!res.ok) throw new Error(res.status === 429 ? 'daily AI limit reached' : `AI request failed (${res.status})`)
+  if (!res.ok) throw new Error({ 429: 'daily AI limit reached', 503: 'the AI model is busy, try again later' }[res.status] ?? `AI request failed (${res.status})`)
   return res.json()
 }
 
