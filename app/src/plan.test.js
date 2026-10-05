@@ -89,6 +89,7 @@ test('validateWeek keeps only days that match group, counts and availability', (
   assert.deepEqual(ok({ day: '2026-10-05', exercises: chest }), []) // day not asked for
   assert.deepEqual(Object.keys(validateWeek({ days: [good] }, { ...ctx, blocked: new Set([chest[0]]) })), []) // blocked
   assert.deepEqual(validateWeek(null, ctx), {})
+  assert.deepEqual(Object.keys(validateWeek({ days: [good] }, { ...ctx, taken: new Set([chest[7]]) })), []) // used on another day
   // Core day: only main exercises, all Core
   const coreInfo = [{ day: '2026-09-28', group: 'Core', main: 7, core: 0 }]
   assert.equal(Object.keys(validateWeek({ days: [{ day: '2026-09-28', exercises: ids('Core', 7) }] }, { ...ctx, infos: coreInfo })).length, 1)

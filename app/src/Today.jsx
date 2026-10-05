@@ -71,7 +71,7 @@ function SetsForm({ units: [amount, load], rows, saved, onChange, onSave }) {
   )
 }
 
-export default function Today({ exercises, data, userId, save, setOverride, today, schedule, groups, ai }) {
+export default function Today({ exercises, data, userId, save, setOverride, today, schedule, groups, ai, planWithAi }) {
   const [index, setIndex] = useState(0)
   const [drafts, setDrafts] = useState({}) // unsaved set rows by exercise id, kept while paging
   const [picking, openPicker, closePicker] = useBackClosable()
@@ -184,6 +184,15 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
         </div>
         <p className="subtitle">
           {formatDay(today, { weekday: 'long', day: 'numeric', month: 'long' })}, week {info.week} day {info.weekDay}. {done.size} of {list.length} done.
+          {/* once something is logged, single swaps fit better than a whole new list */}
+          {info.main + info.core > 0 && !done.size && (
+            <>
+              {' '}
+              <button className="link" disabled={Boolean(ai.days)} onClick={async () => { setStatus(''); setIndex(0); setStatus(await planWithAi([today])) }}>
+                {ai.days?.includes(today) ? 'AI is planning…' : 'Re-plan today with AI'}
+              </button>
+            </>
+          )}
         </p>
         <nav className="chips" aria-label="Today's exercises">
           {list.map((e, j) => (

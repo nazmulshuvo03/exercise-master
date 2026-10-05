@@ -42,16 +42,18 @@ export function dayInfo(day, settings, overrides = {}) {
 // ---------- AI answers: the model may only choose from what the app already allows ----------
 
 // Per day, keeps the AI's list only when it has exactly the expected main and core exercises, all
-// real, unblocked, from the right group, no duplicates. Returns { day: [ids] } for accepted days;
-// the rest stay on the preset rotation.
-export function validateWeek(response, { exercises, blocked, infos }) {
+// real, unblocked, from the right group, no duplicates, and none of `taken` (ids planned on the
+// week's other days). Returns { day: [ids] } for accepted days; the rest keep what they had (an
+// earlier plan or the preset rotation).
+export function validateWeek(response, { exercises, blocked, infos, taken }) {
   const byId = new Map(exercises.map((e) => [e.id, e]))
+  const used = new Set(taken)
   const accepted = {}
   for (const { day, exercises: ids } of Array.isArray(response?.days) ? response.days : []) {
     const info = infos.find((i) => i.day === day)
     if (!info || !Array.isArray(ids) || new Set(ids).size !== ids.length) continue
     const picked = ids.map((id) => byId.get(id))
-    if (picked.some((e) => !e || blocked.has(e.id))) continue
+    if (picked.some((e) => !e || blocked.has(e.id) || used.has(e.id))) continue
     const count = (group) => picked.filter((e) => e.bodyPart === group).length
     const core = info.group === CORE ? 0 : count(CORE) // a Core day has only main exercises
     if (count(info.group) === info.main && core === info.core && picked.length === info.main + info.core) {

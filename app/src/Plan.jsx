@@ -56,6 +56,15 @@ export default function Plan({ exercises, data, setOverride, today, schedule, gr
                     <span className="plan-items">
                       {items.filter(Boolean).map((e) => e.name).join(', ') ||
                         (info.group === REST ? 'Rest' : past ? 'Nothing logged' : planning ? 'AI is planning…' : 'Not planned yet')}
+                      {!past && info.plan && (
+                        <>
+                          {' '}
+                          <button className="link" disabled={Boolean(ai.days)} onClick={() => planWithAi([day])}
+                            aria-label={`Re-plan ${formatDay(day, { dateStyle: 'full' })} with AI`}>
+                            {ai.days?.includes(day) ? 'Planning…' : 'Re-plan'}
+                          </button>
+                        </>
+                      )}
                     </span>
                   </li>
                 )

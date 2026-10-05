@@ -116,9 +116,12 @@ function Workspace({ userId, email }) {
     return buildSchedule({ exercises, blocked: data.blocked, lastDone, settings: data.settings, overrides: data.overrides, from: today })
   }, [exercises, data, today])
 
+  // Plans a week, or re-plans one day the user did not like. Returns the message it shows.
   const planWithAi = async (days) => {
     setAi({ days, message: '' })
-    setAi({ days: null, message: await planDays(days, { exercises, data, userId, save, today }) })
+    const message = await planDays(days, { exercises, data, userId, save, today })
+    setAi({ days: null, message })
+    return message
   }
 
   // The AI plans the rest of the current week as soon as a day there has no exercise list yet.
