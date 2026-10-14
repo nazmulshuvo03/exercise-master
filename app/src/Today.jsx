@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { askAi, swapRequest } from './ai.js'
-import { saveLog, setBlocked } from './data.js'
+import { saveSets, setBlocked, withLog } from './data.js'
 import Library from './Library.jsx'
-import { getRestSeconds, loadSkipped, saveSkipped } from './local.js'
+import { getRestSeconds, getRestTimer, loadSkipped, saveSkipped } from './local.js'
 import { dayInfo, fallbackSwap, formatDay, REST, swapCandidates, validateSwap, weekOf } from './plan.js'
 import Summary from './Summary.jsx'
 import { familyOf, Overlay, Plate, Plated, useBackClosable } from './ui.jsx'
 import Workout from './Workout.jsx'
-import { bump, defaultRows, logRows, minutesFor, planText, replanSummary, setRows, setText } from './workout.js'
+import { bump, defaultRows, logRows, minutesFor, planText, replanSummary, setRows, setText, supersetOf, techniqueNotes } from './workout.js'
 
 const REASONS = [
   { key: 'time', label: 'Only 30 minutes' },
@@ -99,12 +99,19 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
   const i = Math.max(0, Math.min(index, list.length - 1))
   const exercise = list[i]
 
-  const basePlan = (e) => (last.has(e.id) ? logRows(last.get(e.id)) : defaultRows(e.units))
+  // The AI's prescription for the day, else last time's sets, else a first-time default.
+  const targetOf = (e) => info?.targets[e.id]
+  const basePlan = (e) => targetOf(e)?.sets ?? (last.has(e.id) ? logRows(last.get(e.id)) : defaultRows(e.units))
   const editPlan = (e, fn) => setDrafts((d) => ({ ...d, [e.id]: fn(d[e.id] ?? basePlan(e)) }))
   const rowsOf = (e) => setRows(drafts[e.id] ?? basePlan(e), done.get(e.id))
   const isDone = (e, sk = skipped) => sk.has(e.id) || rowsOf(e).every((r) => r.done)
   const rows = exercise && rowsOf(exercise)
   const cur = rows ? rows.findIndex((r) => !r.done) : -1
+  const letters = list.map((e) => targetOf(e)?.superset)
+  const superset = supersetOf(letters, i)
+  const partnersOf = (j) => supersetOf(letters, j).filter((k) => k !== j).map((k) => list[k].name)
+  // superset, drop set and the AI's tip, in words
+  const notesOf = (e, j) => [...techniqueNotes(e.units, rowsOf(e), partnersOf(j)), ...(targetOf(e)?.tip ? [targetOf(e).tip] : [])]
 
   useEffect(() => { // each exercise starts at the top
     if (screen === 'workout') document.querySelector('.screen')?.scrollTo(0, 0)
@@ -184,38 +191,82 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
     advance(next)
   }
 
-  const plain = (rs) => rs.map(({ reps, kg }) => ({ reps, kg }))
+  const plain = (rs) => rs.map(({ reps, kg, drop }) => ({ reps, kg, ...(drop && { drop }) }))
+  // Reps change only the current set; a load change carries on to the sets still to do, so a
+  // ramp or a drop set keeps its shape.
   const adjust = (field, delta, min) =>
-    editPlan(exercise, (plan) => plan.map((r, k) => (k === cur ? { ...r, [field]: bump(r[field], delta, min) } : r)))
-  const addSet = () => editPlan(exercise, () => [...plain(rows), { ...plain(rows).at(-1) }])
+    editPlan(exercise, (plan) => plan.map((r, k) => (k === cur || (field === 'kg' && k > cur) ? { ...r, [field]: bump(r[field], delta, min) } : r)))
+  const addSet = () => editPlan(exercise, () => [...plain(rows), { reps: rows.at(-1).reps, kg: rows.at(-1).kg }])
   const removeSet = () => editPlan(exercise, () => plain(rows.slice(0, -1)))
 
-  // Saves the whole log of the exercise with this set added, copies its load to the sets still to
-  // do, and starts the rest.
-  const logSet = async () => {
-    const set = rows[cur]
-    const logged = [...rows.filter((r) => r.done), set]
+  // Saves the exercise's logged sets, or deletes its log when none are left.
+  const saveLogged = (logged) => {
+    const old = done.get(exercise.id)
+    return save(() => saveSets(userId, exercise.id, today, logged, old), (d, row) => ({ logs: withLog(d.logs, row, old) }))
+  }
+  const loggedRows = () => rows.filter((r) => r.done).map(({ reps, kg }) => ({ reps, kg }))
+  // A set changed by hand: k is its index, set its new { reps, kg }, or null to delete it. A logged
+  // set is saved at once; a set still to do only changes the plan.
+  const editSet = async (k, set) => {
+    if (!rows[k].done) {
+      if (!set && rows.length <= 1) return false
+      editPlan(exercise, () => (set ? plain(rows).map((r, j) => (j === k ? { ...r, ...set } : r)) : plain(rows).filter((_, j) => j !== k)))
+      return true
+    }
+    const logged = loggedRows()
+    if (set) logged[k] = set
+    else logged.splice(k, 1)
     setBusy(true)
-    const row = await save(
-      () => saveLog(userId, { exercise_id: exercise.id, day: today, reps: logged.map((r) => r.reps), weights: logged.map((r) => r.kg) }),
-      (d, row) => ({ logs: [...d.logs.filter((l) => l.id !== row.id), row] }),
-    )
+    const ok = await saveLogged(logged)
     setBusy(false)
-    if (!row) return
-    editPlan(exercise, () => plain(rows).map((r, k) => (k > cur ? { ...r, kg: set.kg } : r)))
-    setStatus('')
-    setRest(getRestSeconds())
+    return ok !== undefined
   }
 
-  // After the rest: stay while the exercise has sets left, else go to the next unfinished one.
+  // Saves the log with this set added. A drop set follows at once; in a superset the next exercise
+  // of the round follows at once; otherwise the rest starts, or with the rest timer off, the next
+  // step does.
+  const logSet = async () => {
+    setBusy(true)
+    const row = await saveLogged([...loggedRows(), { reps: rows[cur].reps, kg: rows[cur].kg }])
+    setBusy(false)
+    if (!row) return
+    if (rows[cur + 1]?.drop) return setStatus('Drop set next: lower the weight and go, no rest.')
+    setStatus('')
+    const partner = superset.find((j) => j > i && !isDone(list[j]))
+    if (partner !== undefined) return setIndex(partner)
+    if (getRestTimer()) setRest(getRestSeconds())
+    else moveOn(cur === rows.length - 1)
+  }
+
+  // Sets done away from the phone: logs every set still to do as planned. Fix any of them after by
+  // tapping it.
+  const logAll = async () => {
+    setBusy(true)
+    const row = await saveLogged(rows.map(({ reps, kg }) => ({ reps, kg })))
+    setBusy(false)
+    if (row) setStatus(`Logged ${rows.length} sets of ${exercise.name}. Tap a set to fix it.`)
+  }
+
+  // After a rest: a superset starts its next round, else stay while the exercise has sets left,
+  // else go to the next unfinished one. finished: its last set was just logged (state may not show
+  // it yet).
+  const moveOn = (finished) => {
+    const doneNow = finished ? new Set(skipped).add(exercise.id) : skipped
+    const j = superset.find((k) => !isDone(list[k], doneNow))
+    if (j !== undefined) setIndex(j)
+    else if (finished) advance(doneNow)
+  }
+  const roundStart = () => superset.find((j) => !isDone(list[j]))
   const endRest = () => {
     setRest(null)
-    if (cur < 0) advance()
+    moveOn(cur < 0)
   }
   const restNext = () => {
+    const j = roundStart()
+    if (j !== undefined && j !== i) return list[j].name
     if (cur >= 0) return `Set ${cur + 1}, ${setText(exercise.units, rows[cur])}`
-    const j = nextOpen(skipped)
-    return j < 0 ? 'Finish the workout' : list[j].name
+    const k = nextOpen(skipped)
+    return k < 0 ? 'Finish the workout' : list[k].name
   }
 
   // The AI card. Started exercises stay; the rest of today's list is planned again.
@@ -245,7 +296,12 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
         list={list} i={i} setIndex={setIndex} exercise={exercise} rows={rows} cur={cur}
         previous={last.get(exercise.id)} isDone={isDone} added={info.added.includes(exercise.id)}
         busy={busy} swapping={swapping} status={status}
-        onLeave={leave} onLog={logSet} onAdjust={adjust} onAddSet={addSet} onRemoveSet={removeSet}
+        notes={notesOf(exercise, i)}
+        technique={[
+          superset.length > 0 && `Superset ${letters[i]} · exercise ${superset.indexOf(i) + 1} of ${superset.length}`,
+          rows.some((r) => r.drop) && 'Drop set',
+        ].filter(Boolean).join(' · ') || 'Tip'}
+        onLeave={leave} onLog={logSet} onLogAll={logAll} onAdjust={adjust} onEditSet={editSet} onAddSet={addSet} onRemoveSet={removeSet}
         onSkip={skip} onNotInMyGym={() => notInMyGym(exercise)} onRemoveAdded={() => removeAdded(exercise)}
         onFinish={() => setScreen('summary')}
         rest={rest} restNext={rest != null ? restNext() : ''} onEndRest={endRest}
@@ -306,11 +362,12 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
           const n = rs.filter((r) => r.done).length
           const status = skipped.has(e.id) ? ['Skipped', true] : n === rs.length ? ['Done'] : n ? [`${n} of ${rs.length}`] : []
           return (
-            <button key={e.id} className="rowbtn" onClick={() => { setIndex(j); setScreen('workout') }}>
-              <span className="idx">{j + 1}</span>
+            <button key={e.id} className={partnersOf(j).length ? 'rowbtn ss' : 'rowbtn'} onClick={() => { setIndex(j); setScreen('workout') }}>
+              <span className="idx">{partnersOf(j).length ? `${j + 1}${letters[j]}` : j + 1}</span>
               <span>
                 <span className="name">{e.name}</span>
                 <span className="muted">{planText(e.units, rs)}{e.bodyPart === 'Core' && info.group !== 'Core' ? ' · core' : ''}</span>
+                {notesOf(e, j).map((n) => <span key={n} className="note">{n}</span>)}
               </span>
               <span className={status[1] ? 'status quiet' : 'status'}>{status[0]}</span>
             </button>

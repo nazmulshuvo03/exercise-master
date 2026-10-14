@@ -1,6 +1,7 @@
 // Set-by-set logging helpers. Pure functions, no React, so plain node can test them.
-// A set is { reps, kg }: `reps` is the exercise's first unit (reps, minutes or seconds) and `kg` its
-// optional load (kg, km, ...). units = [amount, load?], see exercises.units.
+// A set is { reps, kg, drop? }: `reps` is the exercise's first unit (reps, minutes or seconds) and
+// `kg` its optional load (kg, km, ...); `drop` marks a drop set, done without rest after the set
+// before it. units = [amount, load?], see exercises.units.
 
 const START = { Reps: [3, 10], Minutes: [1, 20], Seconds: [3, 30] }
 
@@ -17,7 +18,7 @@ export const logRows = (log) => log.reps.map((reps, i) => ({ reps, kg: Number(lo
 export function setRows(plan, log) {
   const logged = log ? logRows(log) : []
   return [
-    ...plan.map((r, i) => (i < logged.length ? { ...logged[i], done: true } : { ...r, done: false })),
+    ...plan.map((r, i) => (i < logged.length ? { ...logged[i], drop: r.drop, done: true } : { ...r, done: false })),
     ...logged.slice(plan.length).map((r) => ({ ...r, done: true })),
   ]
 }
@@ -39,13 +40,48 @@ export function setText([amount, load], { reps, kg }) {
   return `${time} · ${kg} ${load}${speed}`
 }
 
-// Today's plan for an exercise: "3 × 10 · 60 kg".
+const span = (xs) => {
+  const lo = Math.min(...xs)
+  const hi = Math.max(...xs)
+  return lo === hi ? `${lo}` : `${lo}–${hi}`
+}
+
+// Today's plan for an exercise: "3 × 10 · 60 kg", "4 × 6–8 · 60–70 kg + 1 drop".
 export function planText(units, rows) {
   const [amount, load] = units
-  const n = rows.length
-  if (amount !== 'Reps') return `${n > 1 ? `${n} × ` : ''}${setText(units, rows[0])}`
-  const w = weightText(load, rows[0].kg)
-  return `${n} × ${rows[0].reps}${w ? ` · ${w}` : ''}`
+  const work = rows.filter((r) => !r.drop)
+  const drops = rows.length - work.length
+  const extra = drops ? ` + ${drops} drop` : ''
+  const n = work.length
+  if (amount !== 'Reps') return `${n > 1 ? `${n} × ` : ''}${setText(units, work[0])}${extra}`
+  const kgs = work.map((r) => r.kg)
+  const w = Math.max(...kgs) ? `${span(kgs)} ${load}` : weightText(load, 0)
+  return `${n} × ${span(work.map((r) => r.reps))}${load && w ? ` · ${w}` : ''}${extra}`
+}
+
+// What to do differently on an exercise, for the list and the workout screen. rows: its sets;
+// partners: names of the other exercises in its superset.
+export function techniqueNotes(units, rows, partners) {
+  const notes = []
+  if (partners.length) notes.push(`Superset with ${partners.join(' and ')}: one set of each back to back, rest after the round`)
+  const first = rows.findIndex((r) => r.drop)
+  if (first > 0) {
+    const drops = rows.slice(first).filter((r) => r.drop)
+    notes.push(`Drop set after set ${first}: no rest, straight to ${drops.map((r) => setText(units, r)).join(', then ')}`)
+  }
+  return notes
+}
+
+// Indices of the superset around list entry j: the run of neighbours sharing its letter, or []
+// when it is not in one. letters[k] is the superset letter of the k-th exercise, if any.
+export function supersetOf(letters, j) {
+  const s = letters[j]
+  if (!s) return []
+  let a = j
+  let b = j
+  while (letters[a - 1] === s) a--
+  while (letters[b + 1] === s) b++
+  return b > a ? Array.from({ length: b - a + 1 }, (_, k) => a + k) : []
 }
 
 // What the last session looked like: "3 × 10 at 57.5 kg", or every set when they differ.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { addDays, buildSchedule, dayInfo, fallbackSwap, validateSwap, validateWeek, weekOf } from './plan.js'
+import { addDays, buildSchedule, countRange, dayInfo, fallbackSwap, validateSwap, validateWeek, weekOf } from './plan.js'
 
 const sizes = { Chest: 21, Shoulders: 16, Back: 20, Biceps: 19, Triceps: 18, Legs: 32, Core: 14 }
 const exercises = Object.entries(sizes).flatMap(([part, n], g) =>
@@ -72,7 +72,10 @@ test('validateWeek keeps only days that match group, counts and availability', (
   const good = { day: '2026-09-28', exercises: chest }
   const ok = (day) => Object.keys(validateWeek({ days: [day] }, ctx))
   assert.deepEqual(ok(good), ['2026-09-28'])
-  assert.deepEqual(ok({ ...good, exercises: chest.slice(1) }), []) // wrong count
+  assert.deepEqual(ok({ ...good, exercises: chest.slice(2) }), ['2026-09-28']) // 5 main: within 7 ± 2
+  assert.deepEqual(ok({ ...good, exercises: chest.slice(3) }), []) // 4 main: too few
+  assert.deepEqual(ok({ ...good, exercises: [...ids('Chest', 10), ...ids('Core', 1)] }), []) // 10 main: too many
+  assert.deepEqual(ok({ ...good, exercises: [...ids('Chest', 7), ...ids('Core', 3)] }), []) // 3 core: too many
   assert.deepEqual(ok({ ...good, exercises: [...chest.slice(1), chest[1]] }), []) // duplicate
   assert.deepEqual(ok({ ...good, exercises: [...chest.slice(1), ...ids('Back', 1)] }), []) // wrong group
   assert.deepEqual(ok({ ...good, exercises: [...chest.slice(1), 99999] }), []) // unknown id
@@ -87,6 +90,35 @@ test('validateWeek keeps only days that match group, counts and availability', (
   // Core day: only main exercises, all Core
   const coreInfo = [{ day: '2026-09-28', group: 'Core', main: 7, core: 0 }]
   assert.equal(Object.keys(validateWeek({ days: [{ day: '2026-09-28', exercises: ids('Core', 7) }] }, { ...ctx, infos: coreInfo })).length, 1)
+})
+
+test('count range: settings ± slack, exact when short, zero stays zero', () => {
+  assert.deepEqual(countRange({ main: 7, core: 1 }), { main: [5, 9], core: [0, 2] })
+  assert.deepEqual(countRange({ main: 2, core: 0 }), { main: [1, 4], core: [0, 0] })
+  assert.deepEqual(countRange({ main: 3, core: 1, short: true }), { main: [3, 3], core: [1, 1] })
+})
+
+test('validateWeek keeps clean set targets and real supersets', () => {
+  const [a, b, c, d, e] = ids('Chest', 5)
+  const day = {
+    day: '2026-09-28',
+    exercises: [
+      { id: a, sets: [{ reps: 8, kg: 60 }, { reps: 8.4, kg: 62.54 }, { reps: 10, kg: 45, drop: true }], tip: '  pause at the chest  ' },
+      { id: b, sets: [{ reps: 0, kg: 20 }] }, // bad reps: no target
+      { id: c, sets: [{ reps: 12, kg: 10 }], superset: 'A' },
+      { id: d, sets: [{ reps: 12, kg: 12, drop: true }], superset: 'A' }, // first set cannot be a drop
+      { id: e, sets: [{ reps: 12 }], superset: 'B' }, // alone: not a superset
+    ],
+  }
+  const { plan, targets } = validateWeek({ days: [day] }, { ...ctx, infos: [{ ...infos[0], core: 0 }] })['2026-09-28']
+  assert.deepEqual(plan, [a, b, c, d, e])
+  assert.deepEqual(targets[a], { sets: [{ reps: 8, kg: 60 }, { reps: 8, kg: 62.5 }, { reps: 10, kg: 45, drop: true }], tip: 'pause at the chest' })
+  assert.equal(targets[b], undefined)
+  assert.equal(targets[c].superset, 'A')
+  assert.deepEqual(targets[d], { sets: [{ reps: 12, kg: 12 }], superset: 'A' })
+  const withDrop = validateWeek({ days: [{ ...day, exercises: [day.exercises[0], { ...day.exercises[2], sets: [{ reps: 12, kg: 10 }, { reps: 12, kg: 8, drop: true }] }, day.exercises[3], day.exercises[1], day.exercises[4]] }] }, { ...ctx, infos: [{ ...infos[0], core: 0 }] })['2026-09-28']
+  assert.deepEqual(withDrop.targets[c].sets, [{ reps: 12, kg: 10 }]) // no drop set inside a superset
+  assert.deepEqual(targets[e], { sets: [{ reps: 12, kg: 0 }] })
 })
 
 test('swaps stay in the body part, avoid the day and blocked, and prefer similar tags', () => {

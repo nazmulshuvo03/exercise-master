@@ -81,6 +81,23 @@ export const saveLog = async (userId, log) =>
     .upsert({ user_id: userId, ...log }, { onConflict: 'user_id,exercise_id,day' })
     .select().single())
 
+export const deleteLog = async (id) =>
+  check(await supabase.from('workout_logs').delete().eq('id', id))
+
+// Saves one exercise's sets ({ reps, kg }) on a day as its log, or deletes its log `old` when no set
+// is left. Returns the saved row, or null after a delete.
+export async function saveSets(userId, exerciseId, day, sets, old) {
+  if (sets.length) return saveLog(userId, { exercise_id: exerciseId, day, reps: sets.map((s) => s.reps), weights: sets.map((s) => s.kg) })
+  if (old) await deleteLog(old.id)
+  return null
+}
+
+// data.logs after saveSets, still sorted by day then id as fetchUserData returns them (callers rely
+// on the latest log coming last).
+export const withLog = (logs, row, old) =>
+  [...logs.filter((l) => l.id !== (row ?? old)?.id), ...(row ? [row] : [])]
+    .sort((a, b) => a.day.localeCompare(b.day) || a.id - b.id)
+
 export const setBlocked = async (userId, exerciseId, blocked) =>
   check(blocked
     ? await supabase.from('blocked_exercises').insert({ user_id: userId, exercise_id: exerciseId })

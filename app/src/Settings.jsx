@@ -1,18 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { saveSettings, setBlocked } from './data.js'
-import { getRestSeconds, REST_STEP, setRestSeconds } from './local.js'
+import { getRestSeconds, getRestTimer, REST_STEP, setRestSeconds, setRestTimer } from './local.js'
 import { addDays, CORE, formatDay } from './plan.js'
 import { supabase } from './supabase.js'
 import { GroupSelect, Plate, Stepper } from './ui.jsx'
 
 // jsonb may reorder keys, so compare settings in a fixed order.
-const norm = (s) => JSON.stringify([s.start_date, s.week, Object.entries(s.main_counts).sort(), Object.entries(s.core_counts).sort()])
+const norm = (s) => JSON.stringify([s.start_date, s.goal, s.week, Object.entries(s.main_counts).sort(), Object.entries(s.core_counts).sort()])
 const clamp = (n) => Math.max(0, Math.min(12, n))
 const SAVE_DELAY = 600
 
 export default function Settings({ exercises, data, userId, save, groups, email, setScreen }) {
   const [form, setForm] = useState(() => ({ ...data.settings }))
   const [rest, setRest] = useState(getRestSeconds)
+  const [timer, setTimer] = useState(getRestTimer)
   const mainGroups = groups.filter((g) => g !== CORE)
   const latest = useRef(form)
   useEffect(() => { latest.current = form }) // first, so the save below reads this render's form
@@ -20,10 +21,10 @@ export default function Settings({ exercises, data, userId, save, groups, email,
 
   // Changes save by themselves: shortly after the last edit, and at once when leaving the page.
   const flush = () => {
-    const { start_date, week, main_counts, core_counts } = latest.current
+    const { start_date, goal, week, main_counts, core_counts } = latest.current
     if (!start_date || norm(latest.current) === saved.current) return
     saved.current = norm(latest.current)
-    return save(() => saveSettings(userId, { start_date, week, main_counts, core_counts }), (_d, settings) => ({ settings }))
+    return save(() => saveSettings(userId, { start_date, goal, week, main_counts, core_counts }), (_d, settings) => ({ settings }))
   }
   useEffect(() => {
     const t = setTimeout(flush, SAVE_DELAY)
@@ -63,6 +64,18 @@ export default function Settings({ exercises, data, userId, save, groups, email,
         </span>
       </div>
 
+      <div className="stack stack-10">
+        <div className="field">
+          <label htmlFor="goal">Goal</label>
+          <select id="goal" className="input input-lg" value={form.goal} onChange={(e) => setForm((f) => ({ ...f, goal: e.target.value }))}>
+            <option value="bulk">Bulk: build muscle in a calorie surplus</option>
+            <option value="maintain">Maintain</option>
+            <option value="cut">Cut: keep muscle in a calorie deficit</option>
+          </select>
+        </div>
+        <span className="muted balance">The AI picks sets, reps and load for this goal.</span>
+      </div>
+
       <div className="stack stack-2">
         <h4 style={{ marginBottom: 6 }}>Usual week</h4>
         {form.week.map((g, i) => (
@@ -81,7 +94,7 @@ export default function Settings({ exercises, data, userId, save, groups, email,
 
       <div className="stack stack-2">
         <h4>Exercises per day</h4>
-        <span className="muted" style={{ marginBottom: 8 }}>Main exercises come from the day's group. Core exercises are added on top.</span>
+        <span className="muted" style={{ marginBottom: 8 }}>Main exercises come from the day's group. Core exercises are added on top. The AI may plan up to 2 more or fewer main exercises, and 1 more or fewer core, from your history.</span>
         <div className="counts head"><span>Group</span><span>Main</span><span>Core</span></div>
         {mainGroups.map((g) => (
           <div className="counts" key={g}>
@@ -94,7 +107,12 @@ export default function Settings({ exercises, data, userId, save, groups, email,
 
       <div className="stack stack-6">
         <h4>Rest between sets</h4>
-        <div className="between">
+        <label className="between" style={{ fontSize: 15 }}>
+          <span>Rest timer after each set</span>
+          <input type="checkbox" checked={timer} onChange={(e) => { setTimer(e.target.checked); setRestTimer(e.target.checked) }} />
+        </label>
+        {!timer && <span className="muted balance">Off: rest on your own and log sets whenever suits you, one by one or all at once.</span>}
+        {timer && <div className="between">
           <span className="muted balance">The countdown starts after each logged set.</span>
           <div style={{ width: 150, flex: 'none' }}>
             <Stepper
@@ -103,7 +121,7 @@ export default function Settings({ exercises, data, userId, save, groups, email,
               onPlus={() => { const s = Math.min(300, rest + REST_STEP); setRest(s); setRestSeconds(s) }}
             />
           </div>
-        </div>
+        </div>}
       </div>
 
       <div className="stack stack-6">

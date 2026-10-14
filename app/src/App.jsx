@@ -103,7 +103,7 @@ function Workspace({ userId, email }) {
     const { settings } = data
     if (fields.muscle_group === settings.week[daysBetween(settings.start_date, day) % 7]) fields = { ...fields, muscle_group: null }
     if ('muscle_group' in fields) {
-      fields = { ...fields, plan: null }
+      fields = { ...fields, plan: null, targets: null }
       tried.current.delete(day) // new group: let the auto-plan ask the AI for this day again
     }
     return save(() => saveOverride(userId, day, fields), (d, row) => ({ overrides: { ...d.overrides, [day]: row } }))
@@ -126,9 +126,9 @@ function Workspace({ userId, email }) {
     return result
   }
 
-  // Undo of planWithAi: puts back each day's earlier plan (null = the preset rotation).
+  // Undo of planWithAi: puts back each day's earlier plan and targets (null = the preset rotation).
   const restorePlans = (prev) => save(
-    () => saveOverrides(userId, Object.entries(prev).map(([day, plan]) => ({ day, plan }))),
+    () => saveOverrides(userId, Object.entries(prev).map(([day, p]) => ({ day, ...p }))),
     (d, rows) => ({ overrides: { ...d.overrides, ...Object.fromEntries(rows.map((r) => [r.day, r])) } }),
   )
 

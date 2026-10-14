@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ExerciseInfo, musclesOf, Plate, Plated, Stepper } from './ui.jsx'
-import { loadStep, lastText, repStep, setText } from './workout.js'
+import { bump, loadStep, lastText, repStep, setText } from './workout.js'
 
 // Countdown over the workout. It counts to a deadline, so a phone that sleeps mid-rest still shows
 // the right time. When it runs out (or "Skip rest" is tapped) onDone moves on.
@@ -36,13 +36,14 @@ function RestSheet({ seconds, next, onDone }) {
   )
 }
 
-// The set being done now: steppers for the amount and the load, then the log button.
-function SetNow({ exercise, set, n, busy, onAdjust, onLog }) {
+// Steppers for one set's amount and load, then its buttons: the set being done now, or a logged
+// set being fixed.
+export function SetEditor({ exercise, set, title, onAdjust, children }) {
   const [amount, load] = exercise.units
   const bw = load === 'kg' && set.kg === 0
   return (
     <div className="setnow">
-      <div className="kicker">Set {n} · now</div>
+      <div className="kicker">{title}</div>
       <div className={load ? 'steppers' : 'steppers one'}>
         <Stepper label={amount} value={set.reps} onMinus={() => onAdjust('reps', -repStep(exercise.units), 1)} onPlus={() => onAdjust('reps', repStep(exercise.units), 1)} />
         {load && (
@@ -54,17 +55,22 @@ function SetNow({ exercise, set, n, busy, onAdjust, onLog }) {
           />
         )}
       </div>
-      <button className="btn btn-primary btn-lg" disabled={busy} onClick={onLog}>Log set {n}</button>
+      {children}
     </div>
   )
 }
 
 export default function Workout({
-  list, i, setIndex, exercise, rows, cur, previous, isDone, added, busy, swapping, status,
-  onLeave, onLog, onAdjust, onAddSet, onRemoveSet, onSkip, onNotInMyGym, onRemoveAdded, onFinish,
+  list, i, setIndex, exercise, rows, cur, previous, isDone, added, busy, swapping, status, notes, technique,
+  onLeave, onLog, onLogAll, onAdjust, onEditSet, onAddSet, onRemoveSet, onSkip, onNotInMyGym, onRemoveAdded, onFinish,
   rest, restNext, onEndRest,
 }) {
   const last = i === list.length - 1
+  // the set being changed by hand: { id: exercise id, k: set index, set: { reps, kg } }
+  const [edit, setEdit] = useState(null)
+  const editing = edit?.id === exercise.id ? edit : null
+  const adjustEdit = (field, delta, min) => setEdit((x) => ({ ...x, set: { ...x.set, [field]: bump(x.set[field], delta, min) } }))
+  const finishEdit = async (set) => { if (await onEditSet(editing.k, set)) setEdit(null) }
   return (
     <>
       <div className="page gap-22" style={{ paddingTop: 4 }}>
@@ -87,16 +93,49 @@ export default function Workout({
           <div style={{ fontSize: 14 }}>{previous ? `Last time: ${lastText(exercise.units, previous)}` : 'First time'}</div>
         </div>
 
+        {notes.length > 0 && (
+          <section className="card" aria-label={technique}>
+            <div className="card-kicker">{technique}</div>
+            {notes.map((n) => <div key={n} style={{ fontSize: 15, lineHeight: 1.45 }}>{n}</div>)}
+          </section>
+        )}
+
         <div>
-          {rows.map((r, k) => (k === cur
-            ? <SetNow key={k} exercise={exercise} set={r} n={k + 1} busy={busy} onAdjust={onAdjust} onLog={onLog} />
-            : (
-              <div key={k} className={r.done ? 'setrow done' : 'setrow'}>
-                <span className="n">Set {k + 1}</span>
+          {rows.map((r, k) => {
+            const name = `Set ${k + 1}${r.drop ? ' · drop' : ''}`
+            if (editing?.k === k) {
+              return (
+                <SetEditor key={k} exercise={exercise} set={editing.set} title={`${name} · edit`} onAdjust={adjustEdit}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="btn btn-primary" style={{ flex: 2 }} disabled={busy} onClick={() => finishEdit(editing.set)}>Save</button>
+                    <button className="btn btn-secondary" style={{ flex: 1 }} disabled={busy || (!r.done && rows.length <= 1)} onClick={() => finishEdit(null)}>{r.done ? 'Delete' : 'Remove'}</button>
+                    <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setEdit(null)}>Cancel</button>
+                  </div>
+                </SetEditor>
+              )
+            }
+            if (k === cur && !editing) {
+              return (
+                <SetEditor key={k} exercise={exercise} set={r} title={`${name} · now`} onAdjust={onAdjust}>
+                  <button className="btn btn-primary btn-lg" disabled={busy} onClick={onLog}>Log set {k + 1}</button>
+                  {rows.length - k > 1 && (
+                    <button className="btn btn-secondary" disabled={busy} onClick={onLogAll}>Log all {rows.length - k} sets as shown</button>
+                  )}
+                </SetEditor>
+              )
+            }
+            const text = (
+              <>
+                <span className="n">{name}</span>
                 <span className="num">{setText(exercise.units, r)}</span>
-                <span className="st">{r.done ? 'Logged' : ''}</span>
-              </div>
-            )))}
+                <span className="st">{r.done ? 'Logged · edit' : 'Edit'}</span>
+              </>
+            )
+            return (
+              <button key={k} className={r.done ? 'setrow done' : 'setrow'} aria-label={`Edit ${name}, ${setText(exercise.units, r)}`}
+                onClick={() => setEdit({ id: exercise.id, k, set: { reps: r.reps, kg: r.kg } })}>{text}</button>
+            )
+          })}
           {cur < 0 && <div className="accent-text" style={{ paddingTop: 14 }} role="status">All sets logged.</div>}
         </div>
 

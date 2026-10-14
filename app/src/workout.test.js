@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bump, defaultRows, lastText, planText, replanSummary, setRows, setText, volumeOf } from './workout.js'
+import { bump, defaultRows, lastText, planText, replanSummary, setRows, setText, supersetOf, techniqueNotes, volumeOf } from './workout.js'
 
 const STRENGTH = ['Reps', 'kg']
 const log = (reps, weights) => ({ exercise_id: 1, reps, weights: weights.map(String) })
@@ -44,4 +44,25 @@ test('re-plan summary pairs swaps and notes drops and additions', () => {
   assert.deepEqual(replanSummary([1, 2, 3], [1, 4, 3], name), { headline: '1 exercise swapped', changes: ['E2 → E4'] })
   assert.deepEqual(replanSummary([1, 2, 3], [1, 2], name), { headline: 'Cut to 2 exercises', changes: ['Dropped E3'] })
   assert.deepEqual(replanSummary([1, 2], [2, 1], name), { headline: 'Same exercises, new order', changes: [] })
+})
+
+test('plan text shows ranges and drop sets', () => {
+  assert.equal(planText(STRENGTH, [{ reps: 8, kg: 60 }, { reps: 6, kg: 70 }, { reps: 12, kg: 50, drop: true }]), '2 × 6–8 · 60–70 kg + 1 drop')
+  assert.equal(planText(STRENGTH, [{ reps: 12, kg: 0 }, { reps: 10, kg: 0 }]), '2 × 10–12 · body weight')
+  assert.equal(planText(['Reps'], [{ reps: 15, kg: 0 }]), '1 × 15')
+})
+
+test('superset is the run of neighbours sharing a letter', () => {
+  const letters = [undefined, 'A', 'A', 'B', undefined, 'A']
+  assert.deepEqual(supersetOf(letters, 1), [1, 2])
+  assert.deepEqual(supersetOf(letters, 2), [1, 2])
+  assert.deepEqual(supersetOf(letters, 3), []) // alone
+  assert.deepEqual(supersetOf(letters, 0), [])
+  assert.deepEqual(supersetOf(letters, 5), [])
+})
+
+test('technique notes name the superset partner and the drops', () => {
+  const rows = [{ reps: 12, kg: 30 }, { reps: 12, kg: 30 }, { reps: 10, kg: 22.5, drop: true }, { reps: 10, kg: 15, drop: true }]
+  assert.deepEqual(techniqueNotes(STRENGTH, rows, []), ['Drop set after set 2: no rest, straight to 10 × 22.5 kg, then 10 × 15 kg'])
+  assert.deepEqual(techniqueNotes(STRENGTH, rows.slice(0, 2), ['Cable fly']), ['Superset with Cable fly: one set of each back to back, rest after the round'])
 })

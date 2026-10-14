@@ -35,29 +35,78 @@ export function dayInfo(day, settings, overrides = {}) {
     core: rest || group === CORE ? 0 : (settings.core_counts[group] ?? 0),
     added: o.added ?? [], // exercise ids picked by hand for this day
     plan: rest ? null : (o.plan ?? null), // exact exercise ids (AI or swapped); null = rotate
+    targets: (!rest && o.targets) || {}, // AI set prescriptions by exercise id, see sanitizeTarget
   }
 }
 
 // ---------- AI answers: the model may only choose from what the app already allows ----------
 
-// Per day, keeps the AI's list only when it has exactly the expected main and core exercises, all
-// real, unblocked, from the right group, no duplicates, and none of `taken` (ids planned on the
-// week's other days), and every id in the day's `keep` (exercises already started today). Returns
-// { day: [ids] } for accepted days; the rest keep what they had (an earlier plan or the preset rotation).
+// How many main and core exercises a day may have: the settings' counts give or take a couple, so
+// the AI can size the session from history and recovery. A short session ("Only 30 minutes") is exact.
+export function countRange({ main, core, short }) {
+  if (short) return { main: [main, main], core: [core, core] }
+  const around = (n, slack, min) => (n ? [Math.max(min, n - slack), n + slack] : [0, 0])
+  return { main: around(main, 2, 1), core: around(core, 1, 0) }
+}
+
+const MAX_SETS = 10
+const num = (v, lo, hi) => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi
+
+// One exercise's prescription from the AI, cleaned up, or undefined when its sets are unusable
+// (the exercise then starts from its last log). reps/kg follow exercises.units like a log does.
+export function sanitizeTarget({ sets, superset, tip }) {
+  if (!Array.isArray(sets) || !sets.length || sets.length > MAX_SETS) return
+  if (!sets.every((s) => num(s?.reps, 1, 500) && num(s?.kg ?? 0, 0, 1000))) return
+  const rows = sets.map((s, k) => ({ reps: Math.round(s.reps), kg: Math.round((s.kg ?? 0) * 10) / 10, ...(k > 0 && s.drop === true && { drop: true }) }))
+  return {
+    sets: rows,
+    ...(typeof superset === 'string' && /^[A-Z]$/.test(superset) && { superset }),
+    ...(typeof tip === 'string' && tip.trim() && { tip: tip.trim().slice(0, 100) }),
+  }
+}
+
+// A superset letter only counts on 2+ exercises next to each other; otherwise it is dropped.
+// An exercise in a superset has no drop set: the two do not combine.
+function tidySupersets(ids, targets) {
+  const letters = ids.map((id) => targets[id]?.superset)
+  ids.forEach((id, k) => {
+    const s = letters[k]
+    if (!s) return
+    const at = letters.flatMap((l, j) => (l === s ? [j] : []))
+    if (at.length < 2 || at.at(-1) - at[0] !== at.length - 1) delete targets[id].superset
+    else targets[id].sets = targets[id].sets.filter((r) => !r.drop)
+  })
+}
+
+// Per day, keeps the AI's list only when its main and core counts are in countRange, all real,
+// unblocked, from the right group, no duplicates, and none of `taken` (ids planned on the week's
+// other days), and every id in the day's `keep` (exercises already started today). An entry is an
+// id or { id, sets, superset, tip }. Returns { day: { plan: [ids], targets } } for accepted days;
+// the rest keep what they had (an earlier plan or the preset rotation).
 export function validateWeek(response, { exercises, blocked, infos, taken }) {
   const byId = new Map(exercises.map((e) => [e.id, e]))
   const used = new Set(taken)
   const accepted = {}
-  for (const { day, exercises: ids } of Array.isArray(response?.days) ? response.days : []) {
+  for (const { day, exercises: entries } of Array.isArray(response?.days) ? response.days : []) {
     const info = infos.find((i) => i.day === day)
-    if (!info || !Array.isArray(ids) || new Set(ids).size !== ids.length || info.keep?.some((id) => !ids.includes(id))) continue
+    if (!info || !Array.isArray(entries)) continue
+    const ids = entries.map((x) => (typeof x === 'object' && x ? x.id : x))
+    if (new Set(ids).size !== ids.length || info.keep?.some((id) => !ids.includes(id))) continue
     const picked = ids.map((id) => byId.get(id))
     if (picked.some((e) => !e || blocked.has(e.id) || used.has(e.id))) continue
     const count = (group) => picked.filter((e) => e.bodyPart === group).length
+    const main = count(info.group)
     const core = info.group === CORE ? 0 : count(CORE) // a Core day has only main exercises
-    if (count(info.group) === info.main && core === info.core && picked.length === info.main + info.core) {
-      accepted[day] = ids
-    }
+    const range = countRange(info)
+    const within = (n, [lo, hi]) => n >= lo && n <= hi
+    if (!within(main, range.main) || !within(core, range.core) || picked.length !== main + core) continue
+    const targets = {}
+    entries.forEach((x, k) => {
+      const t = typeof x === 'object' && x && sanitizeTarget(x)
+      if (t) targets[ids[k]] = t
+    })
+    tidySupersets(ids, targets)
+    accepted[day] = { plan: ids, targets }
   }
   return accepted
 }

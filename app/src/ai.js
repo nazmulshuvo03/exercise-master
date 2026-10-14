@@ -1,10 +1,12 @@
 // Browser side of the AI feature. The model is reached through /api/ai (see api/ai.js), which holds
 // the key; answers are validated in plan.js before anything is saved.
 import { saveOverrides } from './data.js'
-import { addDays, CORE, dayInfo, formatDay, validateWeek, weekOf } from './plan.js'
+import { addDays, CORE, countRange, dayInfo, daysBetween, formatDay, validateWeek, weekOf } from './plan.js'
 import { supabase } from './supabase.js'
 
-const HISTORY_DAYS = 21 // the trainer looks back 3 weeks
+const HISTORY_DAYS = 21 // the trainer looks back 3 weeks set by set
+const TREND_WEEKS = 8 // and 8 weeks in weekly totals
+const RECENT = 3 // sessions of each catalog exercise
 const SCANS = 6 // ponytail: latest InBody scans only, raise if the trend needs a longer view
 
 export async function askAi(action, body) {
@@ -24,29 +26,44 @@ const setsText = (log, [amount, load]) =>
   log.reps.map((r, i) => `${r} ${amount.toLowerCase()}${load ? ` ${Number(log.weights[i])} ${load}` : ''}`).join(', ')
 
 // infos: dayInfo() of the days to plan. week: { day, group } of the whole plan week. taken: ids
-// already planned on the week's other days. logs (sorted by day) and scans come from fetchUserData.
-export function weekRequest({ exercises, blocked, infos, week, taken, logs, scans, today, note }) {
+// already planned on the week's other days. logs (sorted by day) and scans come from fetchUserData;
+// overrides (by day) carry what the AI prescribed, so it can compare plan and result.
+export function weekRequest({ exercises, blocked, infos, week, taken, logs, scans, overrides = {}, today, note, goal }) {
   const byId = new Map(exercises.map((e) => [e.id, e]))
   const from = addDays(today, -HISTORY_DAYS)
-  const lastDone = new Map()
+  const recent = new Map() // exercise id -> its last RECENT sessions
   const history = []
+  const weeks = [] // weeks ago - 1 -> { group: [sets, kg volume] }
   for (const l of logs) {
     const e = byId.get(l.exercise_id)
     if (l.day >= today || !e) continue
-    lastDone.set(e.id, l.day)
-    if (l.day >= from) history.push(`${l.day} ${e.bodyPart}: ${e.name} (${setsText(l, e.units)})`)
+    const done = `${l.day}: ${setsText(l, e.units)}`
+    recent.set(e.id, [...(recent.get(e.id) ?? []), done].slice(-RECENT))
+    const target = overrides[l.day]?.targets?.[e.id]
+    const planned = target ? `; planned ${setsText({ reps: target.sets.map((t) => t.reps), weights: target.sets.map((t) => t.kg) }, e.units)}` : ''
+    if (l.day >= from) history.push(`${l.day} ${e.bodyPart}: ${e.name} (did ${setsText(l, e.units)}${planned})`)
+    const ago = Math.floor((daysBetween(l.day, today) - 1) / 7)
+    if (ago >= TREND_WEEKS) continue
+    const g = ((weeks[ago] ??= {})[e.bodyPart] ??= [0, 0])
+    g[0] += l.reps.length
+    if (e.units[1] === 'kg') g[1] += l.reps.reduce((v, r, k) => v + r * Number(l.weights[k]), 0)
   }
+  // "1-7 days ago: Chest 18 sets 9200 kg, Back 20 sets 11800 kg", oldest first
+  const trend = Array.from({ length: TREND_WEEKS }, (_, k) => `${k * 7 + 1}-${k * 7 + 7} days ago: ${
+    Object.entries(weeks[k] ?? {}).map(([g, [n, v]]) => `${g} ${n} sets${v ? ` ${Math.round(v)} kg` : ''}`).join(', ') || 'nothing logged'}`).reverse()
   const groups = new Set(infos.flatMap((i) => [i.group, ...(i.core ? [CORE] : [])]))
   return {
     week,
+    goal,
     note, // what the user told the app about the day ("Gym is busy"), if anything
     // avoid: the day's current list, which the user asked to replace; keep: already started, must stay
-    days: infos.map(({ day, group, main, core, plan, keep }) => ({ day, group, main, core, ...(plan?.length && { avoid: plan }), ...(keep?.length && { keep }) })),
+    days: infos.map((i) => ({ day: i.day, group: i.group, ...countRange(i), ...(i.plan?.length && { avoid: i.plan }), ...(i.keep?.length && { keep: i.keep }) })),
     history,
+    trend,
     body: scans.slice(-SCANS),
     catalog: exercises
       .filter((e) => groups.has(e.bodyPart) && !blocked.has(e.id) && !taken.has(e.id))
-      .map((e) => ({ id: e.id, name: e.name, group: e.bodyPart, tags: e.tags, lastDone: lastDone.get(e.id) ?? null })),
+      .map((e) => ({ id: e.id, name: e.name, group: e.bodyPart, tags: e.tags, units: e.units, recent: recent.get(e.id) ?? [] })),
   }
 }
 
@@ -61,14 +78,14 @@ const SHORT_TOTAL = 4
 function shorten(info, keep, byId) {
   const kept = (group) => keep.filter((id) => byId.get(id)?.bodyPart === group).length
   const core = info.group === CORE ? 0 : Math.max(kept(CORE), Math.min(info.core, 1))
-  return { ...info, core, main: Math.max(kept(info.group), Math.min(info.main, SHORT_TOTAL - core)) }
+  return { ...info, short: true, core, main: Math.max(kept(info.group), Math.min(info.main, SHORT_TOTAL - core)) }
 }
 
 // Asks the AI to plan `days` (one week, or a single day to re-plan) from today on and saves each
 // day it answers well; the rest keep what they had. Exercises already logged on a day stay in its
 // plan. opts: { note } what the user told the app, { short } plan a shorter session.
-// Returns { message, plans: { day: ids } of the days it planned, prev: { day: plan or null } to undo
-// with, focus: the AI's reason for the last day }.
+// Returns { message, plans: { day: ids } of the days it planned, prev: { day: { plan, targets } } to
+// undo with, focus: the AI's reason for the last day }.
 // One call per day, one after another, so every call reads the plans of the week's other days,
 // including the ones just made. A whole week in one call took the model over 3 minutes.
 export async function planDays(days, { exercises, data, userId, save, today, note, short }) {
@@ -80,7 +97,7 @@ export async function planDays(days, { exercises, data, userId, save, today, not
   if (!todo.length) return { message: 'Nothing to plan: the rest of this week is rest days.', plans: {}, prev: {}, focus: '' }
   const byId = new Map(exercises.map((e) => [e.id, e]))
   const ids = (i) => [...(i.plan ?? []), ...i.added]
-  const prev = Object.fromEntries(todo.map((day) => [day, infoOf(day).plan]))
+  const prev = Object.fromEntries(todo.map((day) => [day, { plan: infoOf(day).plan, targets: overrides[day]?.targets ?? null }]))
   const plans = {}
   let focus, error
   for (const [k, day] of todo.entries()) {
@@ -102,13 +119,15 @@ export async function planDays(days, { exercises, data, userId, save, today, not
         taken: new Set(others.flatMap(ids)),
         logs: data.logs,
         scans: data.scans,
+        overrides,
         today,
         note,
+        goal: settings.goal,
       }
       const response = await askAi('week', weekRequest(ctx))
-      const plan = validateWeek(response, ctx)[day]
+      const { plan, targets } = validateWeek(response, ctx)[day] ?? {}
       if (!plan) continue
-      const saved = await save(() => saveOverrides(userId, [{ day, plan }]), (d, rows) => ({
+      const saved = await save(() => saveOverrides(userId, [{ day, plan, targets }]), (d, rows) => ({
         overrides: { ...d.overrides, ...Object.fromEntries(rows.map((r) => [r.day, r])) },
       }))
       if (!saved) return { message: '', plans, prev, focus: '' } // save() already showed the error
