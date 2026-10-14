@@ -1,7 +1,7 @@
 // Browser side of the AI feature. The model is reached through /api/ai (see api/ai.js), which holds
 // the key; answers are validated in plan.js before anything is saved.
 import { saveOverrides } from './data.js'
-import { addDays, CORE, countRange, dayInfo, daysBetween, formatDay, validateWeek, weekOf } from './plan.js'
+import { addDays, CORE, countRange, dayInfo, daysBetween, formatDay, share, validateWeek, weekOf } from './plan.js'
 import { supabase } from './supabase.js'
 
 const HISTORY_DAYS = 21 // the trainer looks back 3 weeks set by set
@@ -51,13 +51,13 @@ export function weekRequest({ exercises, blocked, infos, week, taken, logs, scan
   // "1-7 days ago: Chest 18 sets 9200 kg, Back 20 sets 11800 kg", oldest first
   const trend = Array.from({ length: TREND_WEEKS }, (_, k) => `${k * 7 + 1}-${k * 7 + 7} days ago: ${
     Object.entries(weeks[k] ?? {}).map(([g, [n, v]]) => `${g} ${n} sets${v ? ` ${Math.round(v)} kg` : ''}`).join(', ') || 'nothing logged'}`).reverse()
-  const groups = new Set(infos.flatMap((i) => [i.group, ...(i.core ? [CORE] : [])]))
+  const groups = new Set(infos.flatMap((i) => [...i.groups, ...(i.core ? [CORE] : [])]))
   return {
     week,
     goal,
     note, // what the user told the app about the day ("Gym is busy"), if anything
     // avoid: the day's current list, which the user asked to replace; keep: already started, must stay
-    days: infos.map((i) => ({ day: i.day, group: i.group, ...countRange(i), ...(i.plan?.length && { avoid: i.plan }), ...(i.keep?.length && { keep: i.keep }) })),
+    days: infos.map((i) => ({ day: i.day, groups: i.groups, ...(i.groups.length > 1 && { split: i.mains }), ...countRange(i), ...(i.plan?.length && { avoid: i.plan }), ...(i.keep?.length && { keep: i.keep }) })),
     history,
     trend,
     body: scans.slice(-SCANS),
@@ -77,8 +77,10 @@ export const swapRequest = (exercise, candidates, dayExercises) => ({
 const SHORT_TOTAL = 4
 function shorten(info, keep, byId) {
   const kept = (group) => keep.filter((id) => byId.get(id)?.bodyPart === group).length
-  const core = info.group === CORE ? 0 : Math.max(kept(CORE), Math.min(info.core, 1))
-  return { ...info, short: true, core, main: Math.max(kept(info.group), Math.min(info.main, SHORT_TOTAL - core)) }
+  const core = info.groups.includes(CORE) ? 0 : Math.max(kept(CORE), Math.min(info.core, 1))
+  const main = Math.max(info.groups.reduce((n, g) => n + kept(g), 0), Math.min(info.main, SHORT_TOTAL - core))
+  const split = share(main, info.groups.map((g) => info.mains[g]))
+  return { ...info, short: true, core, main, mains: Object.fromEntries(info.groups.map((g, k) => [g, split[k]])) }
 }
 
 // Asks the AI to plan `days` (one week, or a single day to re-plan) from today on and saves each

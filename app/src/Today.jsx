@@ -315,7 +315,7 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
 
   const totalSets = list.reduce((n, e) => n + rowsOf(e).length, 0)
   const isRest = info.group === REST
-  const family = familyOf(info.group)
+  const family = info.groups.length === 1 && familyOf(info.group)
   const week = weekOf(today, data.settings)
 
   return (
@@ -332,7 +332,7 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
       </div>
 
       <div className="stack">
-        <div className="kicker"><Plate group={info.group} />{isRest ? 'Rest day' : `${family ? `${family} day` : info.group}`}</div>
+        <div className="kicker"><Plate group={info.groups[0]} />{isRest ? 'Rest day' : `${family ? `${family} day` : info.group}`}</div>
         <h1 className="headline"><Plated>{info.group}</Plated></h1>
         {list.length > 0 ? (
           <>
@@ -366,7 +366,7 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
               <span className="idx">{partnersOf(j).length ? `${j + 1}${letters[j]}` : j + 1}</span>
               <span>
                 <span className="name">{e.name}</span>
-                <span className="muted">{planText(e.units, rs)}{e.bodyPart === 'Core' && info.group !== 'Core' ? ' · core' : ''}</span>
+                <span className="muted">{planText(e.units, rs)}{e.bodyPart === 'Core' && !info.groups.includes('Core') ? ' · core' : ''}</span>
                 {notesOf(e, j).map((n) => <span key={n} className="note">{n}</span>)}
               </span>
               <span className={status[1] ? 'status quiet' : 'status'}>{status[0]}</span>
@@ -384,7 +384,7 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
           return (
             <div className="weekrow" key={day}>
               <span className="day">{formatDay(day, { weekday: 'short' })}</span>
-              <Plate group={d.group} />
+              <Plate group={d.groups[0]} />
               <span className={day === today ? 'today' : ''}>{d.group}</span>
               <span className="note">{day === today ? 'Today' : ''}</span>
             </div>

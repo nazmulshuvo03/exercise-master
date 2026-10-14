@@ -97,12 +97,13 @@ function Workspace({ userId, email }) {
     }
   }, [])
 
-  // Changes one day's group or hand-picked exercises. Choosing the week's default group clears the
-  // override; any group change drops the day's exact exercise list, which belonged to the old group.
+  // Changes one day's groups or hand-picked exercises. Choosing just the week's usual group clears
+  // the override; any group change drops the day's exact exercise list, made for the old groups.
   const setOverride = (day, fields) => {
     const { settings } = data
-    if (fields.muscle_group === settings.week[daysBetween(settings.start_date, day) % 7]) fields = { ...fields, muscle_group: null }
-    if ('muscle_group' in fields) {
+    const usual = settings.week[daysBetween(settings.start_date, day) % 7]
+    if (fields.groups?.length === 1 && fields.groups[0] === usual) fields = { ...fields, groups: null }
+    if ('groups' in fields) {
       fields = { ...fields, plan: null, targets: null }
       tried.current.delete(day) // new group: let the auto-plan ask the AI for this day again
     }

@@ -12,7 +12,7 @@ export default function Summary({ data, today, info, byId, done, onClose }) {
   const reps = logs.reduce((n, l) => n + (byId.get(l.exercise_id)?.units[0] === 'Reps' ? l.reps.reduce((a, b) => a + b, 0) : 0), 0)
 
   // the latest earlier day that trained today's group, with everything logged on it
-  const sameGroup = data.logs.filter((l) => l.day < today && byId.get(l.exercise_id)?.bodyPart === info.group)
+  const sameGroup = data.logs.filter((l) => l.day < today && info.groups.includes(byId.get(l.exercise_id)?.bodyPart))
   const lastDay = sameGroup.reduce((d, l) => (l.day > d ? l.day : d), '')
   const lastVolume = lastDay && volumeOf(data.logs.filter((l) => l.day === lastDay), byId)
 
@@ -39,7 +39,7 @@ export default function Summary({ data, today, info, byId, done, onClose }) {
       {tomorrow && (
         <div className="stack stack-6">
           <h4>Tomorrow</h4>
-          <div className="kicker" style={{ fontSize: 18, letterSpacing: 0, textTransform: 'none' }}><Plate group={tomorrow.group} />{tomorrow.group}</div>
+          <div className="kicker" style={{ fontSize: 18, letterSpacing: 0, textTransform: 'none' }}><Plate group={tomorrow.groups[0]} />{tomorrow.group}</div>
         </div>
       )}
       <button className="btn btn-primary btn-lg" onClick={onClose}>Back to Today</button>

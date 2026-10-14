@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { addDays, buildSchedule, countRange, dayInfo, fallbackSwap, validateSwap, validateWeek, weekOf } from './plan.js'
+import { addDays, buildSchedule, countRange, dayInfo, fallbackSwap, share, validateSwap, validateWeek, weekOf } from './plan.js'
 
 const sizes = { Chest: 21, Shoulders: 16, Back: 20, Biceps: 19, Triceps: 18, Legs: 32, Core: 14 }
 const exercises = Object.entries(sizes).flatMap(([part, n], g) =>
@@ -41,7 +41,7 @@ test('blocked exercises never appear; same inputs give same plan', () => {
 test('day overrides change group and append hand-picked exercises', () => {
   const day = '2026-09-29'
   const legs = exercises.find((e) => e.bodyPart === 'Legs')
-  const overrides = { [day]: { muscle_group: 'Legs', added: [0, legs.id] } }
+  const overrides = { [day]: { groups: ['Legs'], added: [0, legs.id] } }
   const d = plan({ overrides }).find((x) => x.day === day)
   assert.equal(d.group, 'Legs')
   assert.equal(d.exercises.length, settings.main_counts.Legs + 2)
@@ -62,8 +62,8 @@ test('a day plan replaces the rotation; blocked ids are dropped; group change ig
 
 const ids = (group, n, from = 0) => exercises.filter((e) => e.bodyPart === group).slice(from, from + n).map((e) => e.id)
 const infos = [
-  { day: '2026-09-28', group: 'Chest', main: 7, core: 1 },
-  { day: '2026-09-29', group: 'Shoulders', main: 6, core: 2 },
+  { day: '2026-09-28', groups: ['Chest'], main: 7, core: 1 },
+  { day: '2026-09-29', groups: ['Shoulders'], main: 6, core: 2 },
 ]
 const ctx = { exercises, blocked: new Set(), infos }
 
@@ -88,7 +88,7 @@ test('validateWeek keeps only days that match group, counts and availability', (
   assert.deepEqual(Object.keys(validateWeek({ days: [good] }, { ...ctx, infos: keepInfos })), ['2026-09-28'])
   assert.deepEqual(Object.keys(validateWeek({ days: [good] }, { ...ctx, infos: [{ ...infos[0], keep: [99999] }] })), [])
   // Core day: only main exercises, all Core
-  const coreInfo = [{ day: '2026-09-28', group: 'Core', main: 7, core: 0 }]
+  const coreInfo = [{ day: '2026-09-28', groups: ['Core'], main: 7, core: 0 }]
   assert.equal(Object.keys(validateWeek({ days: [{ day: '2026-09-28', exercises: ids('Core', 7) }] }, { ...ctx, infos: coreInfo })).length, 1)
 })
 
@@ -119,6 +119,27 @@ test('validateWeek keeps clean set targets and real supersets', () => {
   const withDrop = validateWeek({ days: [{ ...day, exercises: [day.exercises[0], { ...day.exercises[2], sets: [{ reps: 12, kg: 10 }, { reps: 12, kg: 8, drop: true }] }, day.exercises[3], day.exercises[1], day.exercises[4]] }] }, { ...ctx, infos: [{ ...infos[0], core: 0 }] })['2026-09-28']
   assert.deepEqual(withDrop.targets[c].sets, [{ reps: 12, kg: 10 }]) // no drop set inside a superset
   assert.deepEqual(targets[e], { sets: [{ reps: 12, kg: 0 }] })
+})
+
+test('a combined day stays one day long, shared between its groups', () => {
+  assert.deepEqual(share(7, [7, 6]), [4, 3])
+  assert.deepEqual(share(8, [7, 6, 8]), [3, 2, 3])
+  assert.deepEqual(share(2, [7, 6, 8]).reduce((a, b) => a + b), 2)
+  assert.deepEqual(share(7, [7]), [7])
+  const day = '2026-09-28' // Chest
+  const info = dayInfo(day, settings, { [day]: { groups: ['Chest', 'Triceps'] } })
+  assert.equal(info.group, 'Chest + Triceps')
+  assert.equal(info.main, 7)
+  assert.deepEqual(info.mains, { Chest: 4, Triceps: 3 })
+  assert.equal(info.core, 2) // the bigger core count of the two
+  const d = plan({ overrides: { [day]: { groups: ['Chest', 'Triceps'] } } }).find((x) => x.day === day)
+  assert.equal(d.exercises.filter((e) => e.bodyPart === 'Chest').length, 4)
+  assert.equal(d.exercises.filter((e) => e.bodyPart === 'Triceps').length, 3)
+  // the AI must give every group an exercise
+  const ok = (ex) => Object.keys(validateWeek({ days: [{ day, exercises: ex }] }, { ...ctx, infos: [info] }))
+  assert.deepEqual(ok([...ids('Chest', 4), ...ids('Triceps', 3), ...ids('Core', 2)]), [day])
+  assert.deepEqual(ok([...ids('Chest', 7), ...ids('Core', 2)]), []) // no triceps
+  assert.deepEqual(ok([...ids('Chest', 4), ...ids('Triceps', 3), ...ids('Back', 1), ...ids('Core', 2)]), []) // other group
 })
 
 test('swaps stay in the body part, avoid the day and blocked, and prefer similar tags', () => {

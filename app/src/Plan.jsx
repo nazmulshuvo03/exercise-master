@@ -4,6 +4,31 @@ import Day from './Day.jsx'
 import { GroupSelect, Overlay, Plate, useBackClosable } from './ui.jsx'
 
 const SHORT = { day: 'numeric', month: 'short' }
+const MAX_GROUPS = 3
+
+// A day's muscle groups: the first one (or Rest), then up to 2 more to combine on a catch-up day.
+function GroupsPicker({ groups, value, disabled, onChange, label }) {
+  const pick = (k, g) => {
+    if (g === REST) return onChange([REST])
+    const next = [...value]
+    if (g) next[k] = g
+    else next.splice(k, 1)
+    onChange([...new Set(next)])
+  }
+  const extras = value[0] === REST ? [] : [...value.slice(1), ...(value.length < MAX_GROUPS ? [''] : [])]
+  return (
+    <>
+      <GroupSelect groups={groups} value={value[0]} disabled={disabled} onChange={(g) => pick(0, g)} aria-label={label} />
+      {extras.map((g, j) => (
+        <select key={j} className="input" value={g} disabled={disabled} onChange={(e) => pick(j + 1, e.target.value)}
+          aria-label={g ? `${label}: ${g}, change or remove` : `${label}: add a group`}>
+          <option value="">{g ? 'Remove' : '+ Group'}</option>
+          {groups.filter((x) => x === g || !value.includes(x)).map((x) => <option key={x}>{x}</option>)}
+        </select>
+      ))}
+    </>
+  )
+}
 
 // "Re-plan week with AI": idle, busy, then the result with an Undo.
 function WeekCard({ week, days, ai, planned, planWithAi, restorePlans }) {
@@ -117,14 +142,14 @@ export default function Plan({ exercises, data, userId, save, setOverride, today
               return (
                 <div className="planday" key={day}>
                   <div>
-                    <Plate group={info.group} />
+                    <Plate group={info.groups[0]} />
                     <span className={day === today ? 'label accent-text' : 'label'}>{formatDay(day, { weekday: 'short', day: 'numeric', month: 'short' })}</span>
-                    <GroupSelect
+                    <GroupsPicker
                       groups={groups}
-                      value={info.group}
+                      value={info.groups}
                       disabled={past}
-                      onChange={(g) => setOverride(day, { muscle_group: g })}
-                      aria-label={`Muscle group for ${formatDay(day, { dateStyle: 'full' })}`}
+                      onChange={(g) => setOverride(day, { groups: g })}
+                      label={`Muscle groups for ${formatDay(day, { dateStyle: 'full' })}`}
                     />
                   </div>
                   {planning ? <div className="detail">{empty}</div> : dayButton(day, info, empty)}
@@ -161,7 +186,7 @@ export default function Plan({ exercises, data, userId, save, setOverride, today
                       return (
                         <div className="planday" key={day}>
                           <div>
-                            <Plate group={info.group} />
+                            <Plate group={info.groups[0]} />
                             <span className="label">{formatDay(day, { weekday: 'short', day: 'numeric', month: 'short' })}</span>
                             <span>{info.group}</span>
                           </div>

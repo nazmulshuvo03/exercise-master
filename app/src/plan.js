@@ -18,21 +18,40 @@ export const weekOf = (day, settings) => {
   return Array.from({ length: 7 }, (_, k) => addDays(start, k))
 }
 
-// Muscle group and exercise counts for one day, or null when the day is before the plan starts.
+// Splits `total` over `weights` in proportion (largest remainder), at least 1 each while total allows.
+export function share(total, weights) {
+  const base = total >= weights.length ? 1 : 0
+  const left = total - base * weights.length
+  const sum = weights.reduce((a, b) => a + b, 0) || 1
+  const exact = weights.map((w) => (left * w) / sum)
+  const out = exact.map((x) => base + Math.floor(x))
+  const order = exact.map((_, k) => k).sort((a, b) => (exact[b] % 1) - (exact[a] % 1))
+  for (let k = 0, rest = total - out.reduce((a, b) => a + b, 0); k < rest; k++) out[order[k]]++
+  return out
+}
+
+// Muscle groups and exercise counts for one day, or null when the day is before the plan starts.
 // The plan has no end: each week is planned by the AI when it comes.
+// A day can combine 1-3 groups (catching up missed days). The session then stays about one normal
+// day long: the biggest of the groups' counts, shared between them (`mains`).
 export function dayInfo(day, settings, overrides = {}) {
   const i = daysBetween(settings.start_date, day)
   if (i < 0) return null
   const o = overrides[day] ?? {}
-  const group = o.muscle_group ?? settings.week[i % 7]
-  const rest = group === REST
+  const groups = o.groups ?? [settings.week[i % 7]]
+  const rest = groups[0] === REST
+  const counts = groups.map((g) => settings.main_counts[g] ?? 7)
+  const main = rest ? 0 : Math.max(...counts)
+  const split = share(main, counts)
   return {
     day,
     week: Math.floor(i / 7) + 1,
     weekDay: (i % 7) + 1,
-    group,
-    main: rest ? 0 : (settings.main_counts[group] ?? 7),
-    core: rest || group === CORE ? 0 : (settings.core_counts[group] ?? 0),
+    groups,
+    group: groups.join(' + '), // for display
+    mains: Object.fromEntries(groups.map((g, k) => [g, split[k]])), // main exercises per group
+    main,
+    core: rest || groups.includes(CORE) ? 0 : Math.max(...groups.map((g) => settings.core_counts[g] ?? 0)),
     added: o.added ?? [], // exercise ids picked by hand for this day
     plan: rest ? null : (o.plan ?? null), // exact exercise ids (AI or swapped); null = rotate
     targets: (!rest && o.targets) || {}, // AI set prescriptions by exercise id, see sanitizeTarget
@@ -78,7 +97,8 @@ function tidySupersets(ids, targets) {
   })
 }
 
-// Per day, keeps the AI's list only when its main and core counts are in countRange, all real,
+// Per day, keeps the AI's list only when its main and core counts are in countRange (and each group
+// of a combined day has an exercise, when the count allows), all real,
 // unblocked, from the right group, no duplicates, and none of `taken` (ids planned on the week's
 // other days), and every id in the day's `keep` (exercises already started today). An entry is an
 // id or { id, sets, superset, tip }. Returns { day: { plan: [ids], targets } } for accepted days;
@@ -95,11 +115,12 @@ export function validateWeek(response, { exercises, blocked, infos, taken }) {
     const picked = ids.map((id) => byId.get(id))
     if (picked.some((e) => !e || blocked.has(e.id) || used.has(e.id))) continue
     const count = (group) => picked.filter((e) => e.bodyPart === group).length
-    const main = count(info.group)
-    const core = info.group === CORE ? 0 : count(CORE) // a Core day has only main exercises
+    const main = picked.filter((e) => info.groups.includes(e.bodyPart)).length
+    const core = info.groups.includes(CORE) ? 0 : count(CORE) // Core as a day's group counts as main
     const range = countRange(info)
     const within = (n, [lo, hi]) => n >= lo && n <= hi
     if (!within(main, range.main) || !within(core, range.core) || picked.length !== main + core) continue
+    if (range.main[1] >= info.groups.length && info.groups.some((g) => !count(g))) continue
     const targets = {}
     entries.forEach((x, k) => {
       const t = typeof x === 'object' && x && sanitizeTarget(x)
@@ -184,7 +205,7 @@ export function buildSchedule({ exercises, blocked, lastDone, settings, override
     added.forEach((e) => last.set(e.id, day))
     const free = (group) => (pools.get(group) ?? []).filter((e) => !added.includes(e))
     const fixed = info.plan?.map((id) => byId.get(id)).filter((e) => e && !blocked.has(e.id))
-    const body = fixed ?? [...pick(free(info.group), info.main, day, last), ...pick(free(CORE), info.core, day, last)]
+    const body = fixed ?? [...info.groups.flatMap((g) => pick(free(g), info.mains[g], day, last)), ...pick(free(CORE), info.core, day, last)]
     fixed?.forEach((e) => last.set(e.id, day))
     days.push({ ...info, exercises: [...body, ...added.filter((e) => !body.includes(e))] })
   }

@@ -303,9 +303,9 @@ button.setrow { width: 100%; border: 0; border-radius: 0; background: none; text
 .weekhead:hover { color: var(--color-accent-700); }
 .weekhead b { font-size: 20px; font-weight: 600; margin-right: 10px; }
 .planday { display: flex; flex-direction: column; gap: 6px; }
-.planday > div:first-child { display: flex; align-items: center; gap: 10px; }
+.planday > div:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
 .planday .label { font-weight: 600; font-size: 15px; width: 84px; flex: none; }
-.planday .input { flex: 1; width: auto; min-height: 32px; padding: 4px 8px; }
+.planday .input { flex: 1; min-width: 92px; width: auto; min-height: 32px; padding: 4px 8px; }
 .planday .detail { padding-left: 20px; font-size: 13px; line-height: 1.5; color: var(--color-neutral-700); text-wrap: pretty; }
 .planday .btn-ghost { font-size: 13px; padding: 0 4px; }
 .planday .daybtn { display: block; width: 100%; border: 0; border-radius: 0; background: none; padding-top: 0; padding-bottom: 0; padding-right: 0; text-align: left; }
