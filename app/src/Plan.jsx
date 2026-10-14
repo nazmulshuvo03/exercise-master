@@ -154,10 +154,10 @@ export default function Plan({ exercises, data, userId, save, setOverride, today
                   </div>
                   {planning ? <div className="detail">{empty}</div> : dayButton(day, info, empty)}
                   <div className="detail">
-                    {!past && info.plan && (
+                    {!past && info.main + info.core > 0 && (
                       <button className="btn btn-ghost" disabled={Boolean(ai.days)} onClick={() => planWithAi([day])}
                         aria-label={`Re-plan ${formatDay(day, { dateStyle: 'full' })} with AI`}>
-                        {ai.days?.includes(day) ? 'Planning…' : 'Re-plan'}
+                        {ai.days?.includes(day) ? 'Planning…' : info.plan ? 'Re-plan' : 'Plan with AI'}
                       </button>
                     )}
                   </div>

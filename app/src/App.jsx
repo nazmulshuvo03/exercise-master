@@ -4,7 +4,7 @@ import Body from './Body.jsx'
 import { bodyPartsOf, fetchExercises, fetchUserData, saveOverride, saveOverrides } from './data.js'
 import Library from './Library.jsx'
 import Plan from './Plan.jsx'
-import { buildSchedule, dayInfo, daysBetween, toDay, weekOf } from './plan.js'
+import { buildSchedule, dayInfo, toDay, weekOf } from './plan.js'
 import Progress from './Progress.jsx'
 import Settings from './Settings.jsx'
 import { supabase } from './supabase.js'
@@ -97,16 +97,10 @@ function Workspace({ userId, email }) {
     }
   }, [])
 
-  // Changes one day's groups or hand-picked exercises. Choosing just the week's usual group clears
-  // the override; any group change drops the day's exact exercise list, made for the old groups.
+  // Changes one day's groups or hand-picked exercises. A group change drops the day's exact exercise
+  // list, made for the old groups: the preset rotation fills in until the user asks the AI to plan it.
   const setOverride = (day, fields) => {
-    const { settings } = data
-    const usual = settings.week[daysBetween(settings.start_date, day) % 7]
-    if (fields.groups?.length === 1 && fields.groups[0] === usual) fields = { ...fields, groups: null }
-    if ('groups' in fields) {
-      fields = { ...fields, plan: null, targets: null }
-      tried.current.delete(day) // new group: let the auto-plan ask the AI for this day again
-    }
+    if ('groups' in fields) fields = { ...fields, plan: null, targets: null }
     return save(() => saveOverride(userId, day, fields), (d, row) => ({ overrides: { ...d.overrides, [day]: row } }))
   }
 
@@ -134,11 +128,12 @@ function Workspace({ userId, email }) {
   )
 
   // The AI plans the rest of the current week as soon as a day there has no exercise list yet.
-  // Days it could not plan fall back to the preset rotation.
+  // Days it could not plan fall back to the preset rotation. A day whose groups the user changed is
+  // left to them: they plan it with the AI when they are done changing it.
   useEffect(() => {
     if (!data || ai.days) return
     const missing = weekOf(today, data.settings).filter((day) => {
-      const info = day >= today && !tried.current.has(day) && dayInfo(day, data.settings, data.overrides)
+      const info = day >= today && !tried.current.has(day) && !data.overrides[day]?.groups && dayInfo(day, data.settings, data.overrides)
       return info && !info.plan && info.main + info.core > 0
     })
     missing.forEach((day) => tried.current.add(day))
