@@ -62,7 +62,7 @@ export function SetEditor({ exercise, set, title, onAdjust, children }) {
 
 export default function Workout({
   list, i, setIndex, exercise, rows, cur, previous, isDone, added, busy, swapping, status, notes, technique,
-  onLeave, onLog, onLogAll, onAdjust, onEditSet, onAddSet, onRemoveSet, onSkip, onNotInMyGym, onRemoveAdded, onFinish,
+  onLeave, onLog, onLogAll, onReplace, onAdjust, onEditSet, onAddSet, onRemoveSet, onSkip, onNotInMyGym, onRemoveAdded, onFinish,
   rest, restNext, onEndRest,
 }) {
   const last = i === list.length - 1
@@ -143,9 +143,11 @@ export default function Workout({
           <button className="btn btn-secondary" onClick={onAddSet} disabled={rows.length >= 50}>+ Set</button>
           <button className="btn btn-secondary" onClick={onRemoveSet} disabled={rows.length <= 1 || rows.at(-1).done}>− Set</button>
           <button className="btn btn-ghost" onClick={onSkip}>Skip today</button>
+          {/* a started exercise keeps its logged sets, so it is not swapped out */}
+          <button className="btn btn-ghost" disabled={swapping || rows.some((r) => r.done)} onClick={onReplace}>{swapping ? 'Finding a replacement…' : 'Replace similar'}</button>
           {added
             ? <button className="btn btn-ghost" onClick={onRemoveAdded}>Remove from today</button>
-            : <button className="btn btn-ghost" disabled={swapping} onClick={onNotInMyGym}>{swapping ? 'Finding a replacement…' : 'Not in my gym'}</button>}
+            : <button className="btn btn-ghost" disabled={swapping} onClick={onNotInMyGym}>Not in my gym</button>}
         </div>
         {status && <p className="muted-14 balance" role="status">{status}</p>}
 

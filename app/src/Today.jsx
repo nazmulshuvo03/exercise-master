@@ -149,10 +149,10 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
   }
   const removeAdded = (e) => setOverride(today, { added: info.added.filter((id) => id !== e.id) })
 
-  // "Not in my gym": replaces a not-yet-done exercise in today's list with a similar one (the AI's
-  // pick, or the closest by tags when the AI is unavailable) and never plans the original again.
-  const notInMyGym = async (e) => {
-    if (!confirm(`Mark “${e.name}” as unavailable? You'll get a similar ${e.bodyPart.toLowerCase()} exercise instead, and it won't be planned again. You can undo this in Settings.`)) return
+  // Replaces an exercise in today's list with a similar one: the AI's pick, or the closest by tags
+  // when the AI is unavailable. block: "Not in my gym", the original is never planned again; without
+  // it ("Replace similar") the user just wants something else today.
+  const replace = async (e, block) => {
     const body = info.plan ?? planned.filter((x) => !info.added.includes(x.id)).map((x) => x.id)
     setSwapping(true)
     setStatus('')
@@ -174,14 +174,19 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
       const aiPick = Boolean(next)
       next ??= fallbackSwap(e, ctx)
       // save() resolves to undefined on failure; setBlocked succeeds with null
-      if (await save(() => setBlocked(userId, e.id, true), (d) => ({ blocked: new Set(d.blocked).add(e.id) })) === undefined) return
+      if (block && await save(() => setBlocked(userId, e.id, true), (d) => ({ blocked: new Set(d.blocked).add(e.id) })) === undefined) return
       if (!next) return setStatus(`No similar ${e.bodyPart.toLowerCase()} exercise is left for “${e.name}”.`)
-      if (!body.includes(e.id)) return
-      await setOverride(today, { plan: body.map((id) => (id === e.id ? next.id : id)) })
+      const swap = (ids) => ids.map((id) => (id === e.id ? next.id : id))
+      if (body.includes(e.id)) await setOverride(today, { plan: swap(body) })
+      else if (info.added.includes(e.id)) await setOverride(today, { added: swap(info.added) })
+      else return
       setStatus(`Replaced “${e.name}” with “${next.name}”${aiPick && why ? `: ${why}` : ''}${aiPick ? '' : ' (AI unavailable, picked by similar tags)'}.`)
     } finally {
       setSwapping(false)
     }
+  }
+  const notInMyGym = (e) => {
+    if (confirm(`Mark “${e.name}” as unavailable? You'll get a similar ${e.bodyPart.toLowerCase()} exercise instead, and it won't be planned again. You can undo this in Settings.`)) replace(e, true)
   }
 
   const skip = () => {
@@ -302,7 +307,7 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
           rows.some((r) => r.drop) && 'Drop set',
         ].filter(Boolean).join(' · ') || 'Tip'}
         onLeave={leave} onLog={logSet} onLogAll={logAll} onAdjust={adjust} onEditSet={editSet} onAddSet={addSet} onRemoveSet={removeSet}
-        onSkip={skip} onNotInMyGym={() => notInMyGym(exercise)} onRemoveAdded={() => removeAdded(exercise)}
+        onSkip={skip} onNotInMyGym={() => notInMyGym(exercise)} onReplace={() => replace(exercise, false)} onRemoveAdded={() => removeAdded(exercise)}
         onFinish={() => setScreen('summary')}
         rest={rest} restNext={rest != null ? restNext() : ''} onEndRest={endRest}
       />

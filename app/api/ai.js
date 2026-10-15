@@ -43,7 +43,7 @@ trend: ${JSON.stringify(trend)}
 body: ${JSON.stringify(body)}
 catalog: ${JSON.stringify(catalog)}`,
 
-  swap: ({ exercise, dayExercises, candidates }) => `The user wants to skip or avoid "${exercise.name}" (tags: ${exercise.tags.join(', ')}). Pick the most similar replacement from candidates: same target muscle and movement pattern, and not a duplicate of what they already do today (${dayExercises.join(', ')}).
+  swap: ({ exercise, dayExercises, candidates }) => `The user wants to replace "${exercise.name}" (tags: ${exercise.tags.join(', ')}). Pick the most similar replacement from candidates: same target muscle and movement pattern, and not a duplicate of what they already do today (${dayExercises.join(', ')}).
 Return {"id":<candidate id>,"why":"<max 12 words>"}.
 candidates: ${JSON.stringify(candidates)}`,
 
