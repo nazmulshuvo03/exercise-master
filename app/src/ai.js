@@ -67,7 +67,8 @@ export function weekRequest({ exercises, blocked, infos, week, taken, logs, scan
   }
 }
 
-export const swapRequest = (exercise, candidates, dayExercises) => ({
+export const swapRequest = (exercise, candidates, dayExercises, note) => ({
+  note, // what the user told the app about the swap, if anything
   exercise: { name: exercise.name, tags: exercise.tags },
   dayExercises: dayExercises.map((e) => e.name),
   candidates: candidates.map((e) => ({ id: e.id, name: e.name, tags: e.tags })),

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { addDays, dayInfo, daysBetween, formatDay, REST, weekOf } from './plan.js'
 import Day from './Day.jsx'
-import { GroupSelect, Overlay, Plate, useBackClosable } from './ui.jsx'
+import { GroupSelect, Overlay, Plate, useBackClosable, useNote } from './ui.jsx'
 
 const SHORT = { day: 'numeric', month: 'short' }
 const MAX_GROUPS = 3
@@ -31,14 +31,19 @@ function GroupsPicker({ groups, value, disabled, onChange, label }) {
 }
 
 // "Re-plan week with AI": idle, busy, then the result with an Undo.
-function WeekCard({ week, days, ai, planned, planWithAi, restorePlans }) {
+function WeekCard({ week, days, ai, planned, planWithAi, restorePlans, ask }) {
   const [phase, setPhase] = useState('idle')
   const [result, setResult] = useState(null)
   const busy = phase === 'busy' || Boolean(ai.days?.some((d) => days.includes(d)))
 
   const run = async () => {
+    const note = await ask({
+      title: `${planned ? 'Re-plan' : 'Plan'} week ${week} with AI`,
+      text: 'The AI plans every day left this week from your logs. Days you already trained stay as they are.',
+    })
+    if (note === null) return
     setPhase('busy')
-    setResult(await planWithAi(days))
+    setResult(await planWithAi(days, { note }))
     setPhase('done')
   }
   const undo = async () => {
@@ -78,6 +83,14 @@ export default function Plan({ exercises, data, userId, save, setOverride, today
   const currentWeek = Math.floor(daysBetween(settings.start_date, today) / 7) + 1
   const [open, setOpen] = useState({})
   const [shown, showDay, closeDay] = useBackClosable() // the day opened in the day page
+  const [noteSheet, ask] = useNote()
+  const planDay = async (day, info) => {
+    const note = await ask({
+      title: `${info.plan ? 'Re-plan' : 'Plan'} ${formatDay(day, { weekday: 'long' })} with AI`,
+      text: `${info.group}. The AI picks the exercises, sets and loads from your history.`,
+    })
+    if (note !== null) planWithAi([day], { note })
+  }
 
   const thisWeek = currentWeek >= 1 ? weekOf(today, settings) : []
   // finished weeks, newest first
@@ -129,7 +142,7 @@ export default function Plan({ exercises, data, userId, save, setOverride, today
       {thisWeek.length > 0 && (
         <>
           <WeekCard
-            week={currentWeek} days={thisWeek} ai={ai} planWithAi={planWithAi} restorePlans={restorePlans}
+            week={currentWeek} days={thisWeek} ai={ai} planWithAi={planWithAi} restorePlans={restorePlans} ask={ask}
             planned={thisWeek.some((d) => overrides[d]?.plan)}
           />
           <div className="stack stack-20">
@@ -155,7 +168,7 @@ export default function Plan({ exercises, data, userId, save, setOverride, today
                   {planning ? <div className="detail">{empty}</div> : dayButton(day, info, empty)}
                   <div className="detail">
                     {!past && info.main + info.core > 0 && (
-                      <button className="btn btn-ghost" disabled={Boolean(ai.days)} onClick={() => planWithAi([day])}
+                      <button className="btn btn-ghost" disabled={Boolean(ai.days)} onClick={() => planDay(day, info)}
                         aria-label={`Re-plan ${formatDay(day, { dateStyle: 'full' })} with AI`}>
                         {ai.days?.includes(day) ? 'Planning…' : info.plan ? 'Re-plan' : 'Plan with AI'}
                       </button>
@@ -206,6 +219,7 @@ export default function Plan({ exercises, data, userId, save, setOverride, today
           <Day day={shown} today={today} info={shownInfo} items={itemsOf(shown, shownInfo)} data={data} userId={userId} save={save} setOverride={setOverride} />
         </Overlay>
       )}
+      {noteSheet}
     </div>
   )
 }

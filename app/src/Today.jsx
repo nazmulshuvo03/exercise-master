@@ -5,7 +5,7 @@ import Library from './Library.jsx'
 import { getRestSeconds, getRestTimer, loadSkipped, saveSkipped } from './local.js'
 import { dayInfo, fallbackSwap, formatDay, REST, swapCandidates, validateSwap, weekOf } from './plan.js'
 import Summary from './Summary.jsx'
-import { familyOf, Overlay, Plate, Plated, useBackClosable } from './ui.jsx'
+import { familyOf, Overlay, Plate, Plated, useBackClosable, useNote } from './ui.jsx'
 import Workout from './Workout.jsx'
 import { bump, defaultRows, logRows, minutesFor, planText, replanSummary, setRows, setText, supersetOf, techniqueNotes } from './workout.js'
 
@@ -81,6 +81,7 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
   const [swapping, setSwapping] = useState(false)
   const [status, setStatus] = useState('')
   const [picking, openPicker, closePicker] = useBackClosable()
+  const [noteSheet, ask] = useNote()
   const info = dayInfo(today, data.settings, data.overrides)
 
   const last = new Map()
@@ -151,8 +152,8 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
 
   // Replaces an exercise in today's list with a similar one: the AI's pick, or the closest by tags
   // when the AI is unavailable. block: "Not in my gym", the original is never planned again; without
-  // it ("Replace similar") the user just wants something else today.
-  const replace = async (e, block) => {
+  // it ("Replace similar") the user just wants something else today. note: what the user told the AI.
+  const replace = async (e, block, note) => {
     const body = info.plan ?? planned.filter((x) => !info.added.includes(x.id)).map((x) => x.id)
     setSwapping(true)
     setStatus('')
@@ -165,7 +166,7 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
       }
       let next, why
       try {
-        const answer = await askAi('swap', swapRequest(e, swapCandidates(e, ctx), list))
+        const answer = await askAi('swap', swapRequest(e, swapCandidates(e, ctx), list, note))
         next = validateSwap(answer, e, ctx)
         why = typeof answer.why === 'string' ? answer.why.slice(0, 120) : ''
       } catch (err) {
@@ -185,8 +186,17 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
       setSwapping(false)
     }
   }
-  const notInMyGym = (e) => {
-    if (confirm(`Mark “${e.name}” as unavailable? You'll get a similar ${e.bodyPart.toLowerCase()} exercise instead, and it won't be planned again. You can undo this in Settings.`)) replace(e, true)
+  const notInMyGym = async (e) => {
+    const note = await ask({
+      title: `“${e.name}” is not in my gym`,
+      text: `It won't be planned again, and the AI swaps in a similar ${e.bodyPart.toLowerCase()} exercise. You can undo this in Settings.`,
+      send: 'Mark unavailable and replace',
+    })
+    if (note !== null) replace(e, true, note)
+  }
+  const replaceSimilar = async (e) => {
+    const note = await ask({ title: `Replace “${e.name}”`, text: `The AI swaps in a similar ${e.bodyPart.toLowerCase()} exercise for today only.` })
+    if (note !== null) replace(e, false, note)
   }
 
   const skip = () => {
@@ -297,6 +307,7 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
 
   if (screen === 'workout' && exercise) {
     return (
+      <>
       <Workout
         list={list} i={i} setIndex={setIndex} exercise={exercise} rows={rows} cur={cur}
         previous={last.get(exercise.id)} isDone={isDone} added={info.added.includes(exercise.id)}
@@ -307,10 +318,12 @@ export default function Today({ exercises, data, userId, save, setOverride, toda
           rows.some((r) => r.drop) && 'Drop set',
         ].filter(Boolean).join(' · ') || 'Tip'}
         onLeave={leave} onLog={logSet} onLogAll={logAll} onAdjust={adjust} onEditSet={editSet} onAddSet={addSet} onRemoveSet={removeSet}
-        onSkip={skip} onNotInMyGym={() => notInMyGym(exercise)} onReplace={() => replace(exercise, false)} onRemoveAdded={() => removeAdded(exercise)}
+        onSkip={skip} onNotInMyGym={() => notInMyGym(exercise)} onReplace={() => replaceSimilar(exercise)} onRemoveAdded={() => removeAdded(exercise)}
         onFinish={() => setScreen('summary')}
         rest={rest} restNext={rest != null ? restNext() : ''} onEndRest={endRest}
       />
+      {noteSheet}
+      </>
     )
   }
 

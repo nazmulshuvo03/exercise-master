@@ -210,3 +210,32 @@ export function Stepper({ label, name = label, value, onMinus, onPlus, small }) 
     </div>
   )
 }
+
+// Before an AI request: what the AI is about to do, and a box for anything to tell it. Sending with
+// the box empty is fine. ask({ title, text, send }) resolves to the note ('' when empty), or null
+// when cancelled; render `sheet` once in the caller.
+export function useNote() {
+  const [open, setOpen] = useState(null) // { title, text, send, resolve }
+  const ask = useCallback((options) => new Promise((resolve) => setOpen({ ...options, resolve })), [])
+  const close = (value) => {
+    open.resolve(value)
+    setOpen(null)
+  }
+  const sheet = open && (
+    <div className="sheet-backdrop" style={{ zIndex: 20 }} onClick={(e) => e.target === e.currentTarget && close(null)}>
+      <form className="sheet" role="dialog" aria-modal="true" aria-label={open.title}
+        onSubmit={(e) => { e.preventDefault(); close(new FormData(e.currentTarget).get('note').trim()) }}
+        onKeyDown={(e) => e.key === 'Escape' && close(null)}>
+        <div className="card-title">{open.title}</div>
+        {open.text && <div className="muted-14 balance">{open.text}</div>}
+        <textarea name="note" className="input" rows={3} maxLength={300} autoFocus aria-label="Note for the AI (optional)"
+          placeholder="Optional: anything the AI should know, e.g. left shoulder sore, no barbell, more back work" />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" className="btn btn-secondary" style={{ flex: 1 }} onClick={() => close(null)}>Cancel</button>
+          <button className="btn btn-primary" style={{ flex: 2 }}>{open.send ?? 'Send to AI'}</button>
+        </div>
+      </form>
+    </div>
+  )
+  return [sheet, ask]
+}
