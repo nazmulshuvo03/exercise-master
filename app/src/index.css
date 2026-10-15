@@ -268,8 +268,13 @@ button.setrow { width: 100%; border: 0; border-radius: 0; background: none; text
 .slider { position: relative; }
 .slider-track { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
 .slider-track::-webkit-scrollbar { display: none; }
-.slide { flex: 0 0 100%; aspect-ratio: 4 / 3; scroll-snap-align: center; display: grid; place-items: center; background: #fff; }
-.slide img { width: 100%; height: 100%; object-fit: contain; }
+/* the image is pinned to the slide's box, so a tall or wide picture shrinks to fit instead of spilling out */
+.slide { position: relative; flex: 0 0 100%; aspect-ratio: 4 / 3; scroll-snap-align: center; background: #fff; }
+.slide-open { position: absolute; inset: 0; display: grid; place-items: center; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.slide img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.lightbox { position: fixed; inset: 0; z-index: 30; background: #fff; }
+.lightbox > img, .lightbox > .slide-missing { position: absolute; top: 56px; left: 8px; width: calc(100% - 16px); height: calc(100% - 72px); object-fit: contain; display: grid; place-items: center; }
+.lightbox-bar { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; font-size: 14px; }
 .slide-missing { color: var(--color-neutral-700); font-size: 13px; }
 .slider-arrow {
   position: absolute; top: calc(50% - 20px); z-index: 1; width: 40px; height: 40px; font-size: 24px; line-height: 1;

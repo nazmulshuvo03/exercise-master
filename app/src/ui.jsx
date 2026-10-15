@@ -59,6 +59,7 @@ export const musclesOf = (exercise) => exercise.tags.filter((t) => t !== exercis
 function Slider({ images, name }) {
   const track = useRef(null)
   const [index, setIndex] = useState(0)
+  const [full, openFull, closeFull] = useBackClosable() // the full-screen view is open
 
   const go = (i) => {
     const el = track.current
@@ -82,11 +83,30 @@ function Slider({ images, name }) {
         <div className="slider-track" ref={track} onScroll={(e) => setIndex(Math.round(e.currentTarget.scrollLeft / e.currentTarget.clientWidth))}>
           {images.map((src, i) => (
             <div className="slide" key={src} aria-label={`Image ${i + 1} of ${images.length}`}>
-              <RemoteImage src={src} alt={`${name}, image ${i + 1}`} fallback={<div className="slide-missing">Image unavailable</div>} />
+              <button className="slide-open" onClick={() => openFull(true)} aria-label={`Show image ${i + 1} full screen`}>
+                <RemoteImage src={src} alt={`${name}, image ${i + 1}`} fallback={<div className="slide-missing">Image unavailable</div>} />
+              </button>
             </div>
           ))}
         </div>
       </div>
+      {full && (
+        // Escape is handled here first and marked, so a surrounding Overlay stays open
+        <div className="lightbox" role="dialog" aria-modal="true" aria-label={`${name}, image ${index + 1} of ${images.length}`}
+          onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeFull() } }}>
+          <div className="lightbox-bar">
+            <span>{index + 1} / {images.length}</span>
+            <button className="btn btn-secondary" autoFocus onClick={closeFull}>Close</button>
+          </div>
+          <RemoteImage src={images[index]} alt={`${name}, image ${index + 1}`} fallback={<div className="slide-missing">Image unavailable</div>} />
+          {images.length > 1 && (
+            <>
+              <button className="slider-arrow prev" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Previous image">‹</button>
+              <button className="slider-arrow next" onClick={() => go(index + 1)} disabled={index === images.length - 1} aria-label="Next image">›</button>
+            </>
+          )}
+        </div>
+      )}
       {images.length > 1 && (
         <>
           <button className="slider-arrow prev" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Previous image">‹</button>
@@ -136,7 +156,7 @@ export function Overlay({ title, label, onClose, children }) {
 
   useEffect(() => {
     if (!layer.current.contains(document.activeElement)) closeRef.current.focus() // keep an autoFocus child
-    const onKey = (e) => e.key === 'Escape' && onClose()
+    const onKey = (e) => e.key === 'Escape' && !e.defaultPrevented && onClose()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
@@ -152,18 +172,22 @@ export function Overlay({ title, label, onClose, children }) {
   )
 }
 
-// Value shown in an overlay; the phone back button clears it.
+// Value shown in an overlay; the phone back button clears it. Overlays can stack (an image opened
+// full screen inside an exercise's details): each history entry carries its depth, and back closes
+// only the layers above the entry it lands on.
 export function useBackClosable() {
   const [value, setValue] = useState(null)
+  const depth = useRef(0)
 
   useEffect(() => {
-    const onPop = () => setValue(null)
+    const onPop = () => { if ((history.state?.depth ?? 0) < depth.current) setValue(null) }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
 
   const open = useCallback((v) => {
-    history.pushState({ overlay: true }, '')
+    depth.current = (history.state?.depth ?? 0) + 1
+    history.pushState({ overlay: true, depth: depth.current }, '')
     setValue(v)
   }, [])
   const close = useCallback(() => history.back(), [])
